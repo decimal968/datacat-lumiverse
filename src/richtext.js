@@ -627,16 +627,71 @@ export function collectGalleryImages(character, origin = "https://datacat.run") 
 
 // ── Lorebook helpers ────────────────────────────────────────────────────────
 
+function looksLikeBook(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Array.isArray(value.entries)
+    ? value.entries
+    : value.entries && typeof value.entries === "object"
+      ? Object.values(value.entries)
+      : null;
+  return Boolean(
+    entries?.some(
+      (entry) =>
+        entry &&
+        typeof entry === "object" &&
+        typeof (entry.content ?? entry.text) === "string",
+    ),
+  );
+}
+
+function mergeBooks(books) {
+  const usable = books.filter(looksLikeBook);
+  if (usable.length <= 1) return usable[0] || null;
+  const toList = (book) =>
+    Array.isArray(book.entries) ? book.entries : Object.values(book.entries);
+  return {
+    ...usable[0],
+    name: usable.map((book) => book.name).filter(Boolean).join(" + ") || usable[0].name,
+    entries: usable.flatMap(toList),
+  };
+}
+
+// Looks in the standard spots first, then a few names other tools use, then a
+// shallow scan, so a book Datacat serves under an unusual key is still found.
 export function findCharacterBook(card) {
   const source = card && typeof card === "object" ? card : {};
-  const candidates = [
+  const standard = [
     source.data?.character_book,
     source.extensions?.character_book,
     source.data?.extensions?.character_book,
     source.character_book,
     source.characterBook,
-  ];
-  return candidates.find((book) => book && typeof book === "object") || null;
+  ].find((book) => book && typeof book === "object");
+  if (standard) return standard;
+  const holders = [source.data, source].filter((item) => item && typeof item === "object");
+  for (const holder of holders) {
+    for (const key of ["lorebook", "world_info", "worldInfo", "worldbook", "world_book"]) {
+      if (looksLikeBook(holder[key])) return holder[key];
+    }
+    for (const key of ["lorebooks", "character_books", "characterBooks", "worldbooks"]) {
+      const merged = Array.isArray(holder[key]) ? mergeBooks(holder[key]) : null;
+      if (merged) return merged;
+    }
+    for (const key of ["lorebook", "world_info", "worldInfo"]) {
+      const nested = holder.extensions?.[key];
+      if (looksLikeBook(nested)) return nested;
+    }
+  }
+  const scan = (value, depth) => {
+    if (depth > 5 || !value || typeof value !== "object") return null;
+    if (looksLikeBook(value)) return value;
+    for (const child of Array.isArray(value) ? value : Object.values(value)) {
+      const found = scan(child, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  };
+  return scan(source, 0);
 }
 
 export function lorebookEntryCount(book) {
@@ -655,7 +710,10 @@ export function ensureBookInExtensions(card) {
   if (!card || typeof card !== "object") return card;
   const book = findCharacterBook(card);
   if (!book) return card;
-  if (card.spec && card.data) return card;
+  if (card.spec && card.data && typeof card.data === "object") {
+    if (!card.data.character_book) card.data.character_book = book;
+    return card;
+  }
   if (card.extensions?.character_book) return card;
   card.extensions = {
     ...(card.extensions && typeof card.extensions === "object" ? card.extensions : {}),

@@ -781,16 +781,64 @@ function collectGalleryImages(character, origin = "https://datacat.run") {
   const seen = new Set;
   return found.filter((image) => !seen.has(image.url) && seen.add(image.url));
 }
+function looksLikeBook(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return false;
+  const entries = Array.isArray(value.entries) ? value.entries : value.entries && typeof value.entries === "object" ? Object.values(value.entries) : null;
+  return Boolean(entries?.some((entry) => entry && typeof entry === "object" && typeof (entry.content ?? entry.text) === "string"));
+}
+function mergeBooks(books) {
+  const usable = books.filter(looksLikeBook);
+  if (usable.length <= 1)
+    return usable[0] || null;
+  const toList = (book) => Array.isArray(book.entries) ? book.entries : Object.values(book.entries);
+  return {
+    ...usable[0],
+    name: usable.map((book) => book.name).filter(Boolean).join(" + ") || usable[0].name,
+    entries: usable.flatMap(toList)
+  };
+}
 function findCharacterBook(card) {
   const source = card && typeof card === "object" ? card : {};
-  const candidates = [
+  const standard = [
     source.data?.character_book,
     source.extensions?.character_book,
     source.data?.extensions?.character_book,
     source.character_book,
     source.characterBook
-  ];
-  return candidates.find((book) => book && typeof book === "object") || null;
+  ].find((book) => book && typeof book === "object");
+  if (standard)
+    return standard;
+  const holders = [source.data, source].filter((item) => item && typeof item === "object");
+  for (const holder of holders) {
+    for (const key of ["lorebook", "world_info", "worldInfo", "worldbook", "world_book"]) {
+      if (looksLikeBook(holder[key]))
+        return holder[key];
+    }
+    for (const key of ["lorebooks", "character_books", "characterBooks", "worldbooks"]) {
+      const merged = Array.isArray(holder[key]) ? mergeBooks(holder[key]) : null;
+      if (merged)
+        return merged;
+    }
+    for (const key of ["lorebook", "world_info", "worldInfo"]) {
+      const nested = holder.extensions?.[key];
+      if (looksLikeBook(nested))
+        return nested;
+    }
+  }
+  const scan = (value, depth) => {
+    if (depth > 5 || !value || typeof value !== "object")
+      return null;
+    if (looksLikeBook(value))
+      return value;
+    for (const child of Array.isArray(value) ? value : Object.values(value)) {
+      const found = scan(child, depth + 1);
+      if (found)
+        return found;
+    }
+    return null;
+  };
+  return scan(source, 0);
 }
 function lorebookEntryCount(book) {
   const entries = Array.isArray(book?.entries) ? book.entries : book?.entries && typeof book.entries === "object" ? Object.values(book.entries) : [];
@@ -802,8 +850,11 @@ function ensureBookInExtensions(card) {
   const book = findCharacterBook(card);
   if (!book)
     return card;
-  if (card.spec && card.data)
+  if (card.spec && card.data && typeof card.data === "object") {
+    if (!card.data.character_book)
+      card.data.character_book = book;
     return card;
+  }
   if (card.extensions?.character_book)
     return card;
   card.extensions = {
@@ -3407,6 +3458,9 @@ function setup(ctx) {
       background: rgba(116, 73, 163, .28);
       font-size: 12px;
     }
+    .dcv1-lore-chip[data-state="missing"] { border-color: rgba(245,158,11,.55); background: rgba(245,158,11,.1); }
+    .dcv1-lore-chip[data-state="missing"] { flex-wrap: wrap; border-radius: 16px; }
+    .dcv1-lore-chip a { color: var(--dc-yellow); text-decoration: underline; }
     .dcv1-lore-chip span:last-child {
       color: var(--dc-muted);
       font-size: 11px;
@@ -5431,7 +5485,9 @@ function setup(ctx) {
     const cardLoading = state.cardLoading.has(characterId);
     const cardError = state.cardErrors.get(characterId) || "";
     const cardBookEntries = lorebookEntryCount(findCharacterBook(loadedCard));
-    const lorebookInfo = cardBookEntries ? { has: true, count: cardBookEntries } : profileLorebookInfo(character);
+    const profileLore = profileLorebookInfo(character);
+    const lorebookInfo = cardBookEntries ? { has: true, count: cardBookEntries } : profileLore;
+    const loreState = cardBookEntries ? "embedded" : !profileLore.has ? "" : loadedCard ? "missing" : "pending";
     const inlineUrls = new Set([profileDescription, ...tabs].flatMap((item) => item.images.map((image) => image.url)));
     const gallery = collectGalleryImages(character, apiOrigin()).filter((image) => image.url !== avatarUrl && !inlineUrls.has(image.url));
     modalHost.innerHTML = `
@@ -5455,9 +5511,10 @@ function setup(ctx) {
                 by ${creatorRef ? `<button class="dcv1-creator-link" type="button" data-creator-ref="${escapeAttribute(creatorRef)}">${escapeHtml(creator)}</button>` : escapeHtml(creator)}
               </div>
               ${statItems.length ? `<div class="dcv1-character-stat-strip">${statItems.map(([label, value]) => `<div class="dcv1-stat"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`).join("")}</div>` : ""}
-              ${lorebookInfo.has ? `<div class="dcv1-lore-chip" title="This character ships with a lorebook that is imported into Lumiverse automatically.">
+              ${loreState ? `<div class="dcv1-lore-chip" data-state="${loreState}" title="${escapeAttribute(loreState === "embedded" ? "This lorebook is inside the card and is imported into Lumiverse automatically." : loreState === "missing" ? "Datacat lists a lorebook, but the card it shares with other apps does not contain it." : "Checking the card for the lorebook…")}">
                     <span aria-hidden="true">\uD83D\uDCD6</span>
-                    <strong>Lorebook</strong>${lorebookInfo.count ? `<span>${lorebookInfo.count} ${lorebookInfo.count === 1 ? "entry" : "entries"}</span>` : ""}
+                    <strong>Lorebook</strong>
+                    ${loreState === "embedded" ? `<span>${cardBookEntries} ${cardBookEntries === 1 ? "entry" : "entries"} · imports automatically</span>` : loreState === "missing" ? `<span>on Datacat, not in the shared card${botUrl ? ` · <a href="${escapeAttribute(botUrl)}" target="_blank" rel="noopener noreferrer">open Datacat page</a>` : ""}</span>` : `<span>listed on Datacat</span>`}
                   </div>` : ""}
               <section class="dcv1-detail-section">
                 <h2 class="dcv1-detail-heading">About</h2>
@@ -6010,6 +6067,7 @@ function setup(ctx) {
     }
   }
   async function refreshCatalog({ forceLibrary = false } = {}) {
+    datacatFetch("/capabilities").then((payload) => console.info("[Datacat] capabilities:", payload)).catch(() => {});
     const loads = [
       loadAccountState({ force: true }),
       loadSavedCharacters({ force: forceLibrary })
@@ -6754,6 +6812,11 @@ function setup(ctx) {
         throw new Error("Datacat returned an empty card.");
       }
       state.cardCache.set(id, card);
+      console.info("[Datacat] card fields:", {
+        top: Object.keys(card).sort().join(", "),
+        data: Object.keys(card.data || {}).sort().join(", "),
+        lorebookEntries: lorebookEntryCount(findCharacterBook(card))
+      });
     } catch (error) {
       const cancelled = error?.code === "VERIFICATION_CANCELLED" || error?.code === "VERIFICATION_WINDOW_CLOSED";
       if (cancelled)
@@ -6862,7 +6925,7 @@ function setup(ctx) {
       if (lorebookEntries > 0) {
         lorebookDetail = await confirmLorebookImport(lumiverseCharacter.id, lorebookEntries);
       } else if (profileListsLorebook) {
-        lorebookDetail = "Datacat lists a lorebook for this character, but it was not included in the card Datacat served.";
+        lorebookDetail = "Datacat lists a lorebook for this character but doesn't include it in the card it shares with other apps, so it wasn't imported. Download it from the character's Datacat page (Lore/Scripts) and add it in Lumiverse under World Books.";
       }
       setStatus("");
       setImportFeedback({
