@@ -957,7 +957,8 @@ var PAGE_SIZE = 24;
 var CHAT_LOADING_MIN_MS = 750;
 var MAX_MIRRORED_AVATAR_BYTES = 50 * 1024 * 1024;
 var CATALOG_SORT_OPTIONS = Object.freeze([
-  { value: "fresh", label: "Freshly Added" },
+  { value: "fresh_feed", label: "Fresh Feed (matches Fresh tab)" },
+  { value: "fresh", label: "Freshly Added (catalogue)" },
   { value: "first_published", label: "First Published" },
   { value: "score", label: "Highly Rated" },
   { value: "chat_count", label: "Chat Count" },
@@ -1115,7 +1116,7 @@ function normalizeId(value) {
 }
 function normalizeCatalogSort(value) {
   const normalized = String(value || "").trim().toLowerCase();
-  return CATALOG_SORT_OPTIONS.some((option) => option.value === normalized) ? normalized : "fresh";
+  return CATALOG_SORT_OPTIONS.some((option) => option.value === normalized) ? normalized : "fresh_feed";
 }
 function catalogSortOption(value) {
   const normalized = normalizeCatalogSort(value);
@@ -1131,6 +1132,8 @@ function catalogSortBadge(value) {
     return "Msgs";
   if (normalized === "first_published")
     return "Pub.";
+  if (normalized === "fresh")
+    return "Fresh";
   return "Latest";
 }
 function apiOrigin() {
@@ -4376,7 +4379,7 @@ function setup(ctx) {
     viewMode: persistedViewMode,
     characters: [],
     query: String(persistedBrowserState?.query || "").slice(0, 120),
-    catalogSort: persistedBrowserState?.sortVersion === 2 ? normalizeCatalogSort(persistedBrowserState?.catalogSort) : "fresh",
+    catalogSort: persistedBrowserState?.sortVersion === 3 ? normalizeCatalogSort(persistedBrowserState?.catalogSort) : "fresh_feed",
     catalogSortLoading: false,
     density: loadCatalogPrefs().density,
     filters: loadCatalogPrefs().filters,
@@ -4486,7 +4489,7 @@ function setup(ctx) {
         viewMode: state.viewMode,
         query: state.query,
         catalogSort: state.catalogSort,
-        sortVersion: 2,
+        sortVersion: 3,
         selectedTagIds: [...state.selectedTagIds],
         tagPanelOpen: state.tagPanelOpen,
         tagQuery: state.tagQuery,
@@ -6209,7 +6212,7 @@ function setup(ctx) {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
         offset: String(offset),
-        sort: state.catalogSort
+        sort: state.catalogSort === "fresh_feed" ? "fresh" : state.catalogSort
       });
       if (state.query)
         params.set("search", state.query);
@@ -6233,7 +6236,7 @@ function setup(ctx) {
       });
       updateCatalogStatus();
     } catch (error) {
-      if (state.catalogSort === "fresh" && (error.status === 400 || error.status === 422)) {
+      if ((state.catalogSort === "fresh" || state.catalogSort === "fresh_feed") && (error.status === 400 || error.status === 422)) {
         state.catalogSort = "first_published";
         scheduleBrowserStateSave();
         setStatus("Datacat's API doesn't offer “Freshly Added”; showing First Published instead.", true);
@@ -6254,7 +6257,7 @@ function setup(ctx) {
     }
   }
   function catalogUsesFreshFeed() {
-    return state.catalogSort === "fresh" && !state.query && state.selectedTagIds.size === 0 && !state.freshFeedBroken;
+    return state.catalogSort === "fresh_feed" && !state.query && state.selectedTagIds.size === 0 && !state.freshFeedBroken;
   }
   function composeFreshCatalog() {
     const { last24h, thisWeek, tail } = state.mix;
