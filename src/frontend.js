@@ -18,7 +18,8 @@ const PAGE_SIZE = 24;
 const CHAT_LOADING_MIN_MS = 750;
 const MAX_MIRRORED_AVATAR_BYTES = 50 * 1024 * 1024;
 const CATALOG_SORT_OPTIONS = Object.freeze([
-  { value: "first_published", label: "Latest" },
+  { value: "fresh", label: "Freshly Added" },
+  { value: "first_published", label: "First Published" },
   { value: "score", label: "Highly Rated" },
   { value: "chat_count", label: "Chat Count" },
   { value: "messages_per_chat", label: "Msg/Chat" },
@@ -214,7 +215,7 @@ function normalizeCatalogSort(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return CATALOG_SORT_OPTIONS.some((option) => option.value === normalized)
     ? normalized
-    : "first_published";
+    : "fresh";
 }
 
 function catalogSortOption(value) {
@@ -230,6 +231,7 @@ function catalogSortBadge(value) {
   if (normalized === "score") return "Rated";
   if (normalized === "chat_count") return "Chats";
   if (normalized === "messages_per_chat") return "Msgs";
+  if (normalized === "first_published") return "Pub.";
   return "Latest";
 }
 
@@ -3577,7 +3579,12 @@ export function setup(ctx) {
     viewMode: persistedViewMode,
     characters: [],
     query: String(persistedBrowserState?.query || "").slice(0, 120),
-    catalogSort: normalizeCatalogSort(persistedBrowserState?.catalogSort),
+    // sortVersion 2: the old default ("first_published") was never a choice,
+    // so move everyone to Datacat's own default, "Freshly Added", once.
+    catalogSort:
+      persistedBrowserState?.sortVersion === 2
+        ? normalizeCatalogSort(persistedBrowserState?.catalogSort)
+        : "fresh",
     catalogSortLoading: false,
     density: loadCatalogPrefs().density,
     filters: loadCatalogPrefs().filters,
@@ -3701,6 +3708,7 @@ export function setup(ctx) {
           viewMode: state.viewMode,
           query: state.query,
           catalogSort: state.catalogSort,
+          sortVersion: 2,
           selectedTagIds: [...state.selectedTagIds],
           tagPanelOpen: state.tagPanelOpen,
           tagQuery: state.tagQuery,
@@ -5983,6 +5991,14 @@ export function setup(ctx) {
       });
       updateCatalogStatus();
     } catch (error) {
+      if (state.catalogSort === "fresh" && (error.status === 400 || error.status === 422)) {
+        // The API doesn't know this sort; fall back instead of showing an error.
+        state.catalogSort = "first_published";
+        scheduleBrowserStateSave();
+        setStatus("Datacat's API doesn't offer “Freshly Added”; showing First Published instead.", true);
+        window.setTimeout(() => void loadCharacters({ reset: true }), 0);
+        return;
+      }
       const message = error.retryAfter
         ? `${publicErrorMessage(error, "Could not load Datacat.")} Retry in ${error.retryAfter}s.`
         : publicErrorMessage(error, "Could not load Datacat.");
