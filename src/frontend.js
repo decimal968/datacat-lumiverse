@@ -18,7 +18,8 @@ const PAGE_SIZE = 24;
 const CHAT_LOADING_MIN_MS = 750;
 const MAX_MIRRORED_AVATAR_BYTES = 50 * 1024 * 1024;
 const CATALOG_SORT_OPTIONS = Object.freeze([
-  { value: "fresh", label: "Freshly Added" },
+  { value: "fresh_feed", label: "Fresh Feed (matches Fresh tab)" },
+  { value: "fresh", label: "Freshly Added (catalogue)" },
   { value: "first_published", label: "First Published" },
   { value: "score", label: "Highly Rated" },
   { value: "chat_count", label: "Chat Count" },
@@ -215,7 +216,7 @@ function normalizeCatalogSort(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return CATALOG_SORT_OPTIONS.some((option) => option.value === normalized)
     ? normalized
-    : "fresh";
+    : "fresh_feed";
 }
 
 function catalogSortOption(value) {
@@ -232,6 +233,7 @@ function catalogSortBadge(value) {
   if (normalized === "chat_count") return "Chats";
   if (normalized === "messages_per_chat") return "Msgs";
   if (normalized === "first_published") return "Pub.";
+  if (normalized === "fresh") return "Fresh";
   return "Latest";
 }
 
@@ -3582,9 +3584,9 @@ export function setup(ctx) {
     // sortVersion 2: the old default ("first_published") was never a choice,
     // so move everyone to Datacat's own default, "Freshly Added", once.
     catalogSort:
-      persistedBrowserState?.sortVersion === 2
+      persistedBrowserState?.sortVersion === 3
         ? normalizeCatalogSort(persistedBrowserState?.catalogSort)
-        : "fresh",
+        : "fresh_feed",
     catalogSortLoading: false,
     density: loadCatalogPrefs().density,
     filters: loadCatalogPrefs().filters,
@@ -3712,7 +3714,7 @@ export function setup(ctx) {
           viewMode: state.viewMode,
           query: state.query,
           catalogSort: state.catalogSort,
-          sortVersion: 2,
+          sortVersion: 3,
           selectedTagIds: [...state.selectedTagIds],
           tagPanelOpen: state.tagPanelOpen,
           tagQuery: state.tagQuery,
@@ -5977,7 +5979,8 @@ export function setup(ctx) {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
         offset: String(offset),
-        sort: state.catalogSort,
+        // "Fresh Feed" falls back to the API's own fresh ordering for searches.
+        sort: state.catalogSort === "fresh_feed" ? "fresh" : state.catalogSort,
       });
       if (state.query) params.set("search", state.query);
       if (state.selectedTagIds.size) {
@@ -6001,7 +6004,7 @@ export function setup(ctx) {
       });
       updateCatalogStatus();
     } catch (error) {
-      if (state.catalogSort === "fresh" && (error.status === 400 || error.status === 422)) {
+      if ((state.catalogSort === "fresh" || state.catalogSort === "fresh_feed") && (error.status === 400 || error.status === 422)) {
         // The API doesn't know this sort; fall back instead of showing an error.
         state.catalogSort = "first_published";
         scheduleBrowserStateSave();
@@ -6027,7 +6030,7 @@ export function setup(ctx) {
 
   function catalogUsesFreshFeed() {
     return (
-      state.catalogSort === "fresh" &&
+      state.catalogSort === "fresh_feed" &&
       !state.query &&
       state.selectedTagIds.size === 0 &&
       !state.freshFeedBroken
