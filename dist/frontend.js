@@ -948,7 +948,7 @@ var ACCOUNT_ICON = `
   </svg>
 `;
 var CATALOG_PREFS_KEY = "dcv1.catalogPrefs.v1";
-var DENSITIES = ["comfy", "compact", "list"];
+var DENSITIES = ["comfy", "compact"];
 function sanitizeFilters(value) {
   const input = value && typeof value === "object" ? value : {};
   const pick = (raw, allowed) => allowed.includes(Number(raw)) ? Number(raw) : 0;
@@ -3708,32 +3708,6 @@ function setup(ctx) {
     .dcv1-grid[data-density="compact"] .dcv1-card-score { min-width: 34px; min-height: 22px; font-size: 11px; border-radius: 8px; }
     .dcv1-grid[data-density="compact"] .dcv1-card-token { display: none; }
     .dcv1-grid[data-density="compact"] .dcv1-card-actions .dcv1-button { min-height: 26px; font-size: 11px; padding: 3px 4px; }
-    /* List: thumbnail, text and a small action button per row. */
-    .dcv1-grid[data-density="list"] { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-    .dcv1-grid[data-density="list"] .dcv1-card,
-    .dcv1-grid[data-density="list"] .dcv1-skel {
-      display: grid;
-      grid-template-columns: 78px minmax(0, 1fr) auto;
-      grid-template-areas: "cover name actions" "cover author actions" "cover meta actions";
-      grid-template-rows: auto auto 1fr;
-      align-items: start;
-      column-gap: 11px;
-      padding: 7px;
-      border-radius: 12px;
-      background: rgba(255,255,255,.035);
-      contain-intrinsic-size: auto 112px;
-    }
-    .dcv1-grid[data-density="list"] .dcv1-cover-wrap { grid-area: cover; grid-row: 1 / span 3; border-radius: 9px; }
-    .dcv1-grid[data-density="list"] .dcv1-card-body { display: contents; }
-    .dcv1-grid[data-density="list"] .dcv1-name { grid-area: name; margin-top: 2px; font-size: 14px; }
-    .dcv1-grid[data-density="list"] .dcv1-card-author { grid-area: author; }
-    .dcv1-grid[data-density="list"] .dcv1-card-meta { grid-area: meta; margin-top: 6px; flex-wrap: wrap; }
-    .dcv1-grid[data-density="list"] .dcv1-card-actions { grid-area: actions; align-self: center; display: grid; gap: 6px; width: 86px; }
-    .dcv1-grid[data-density="list"] .dcv1-card-score { min-width: 36px; min-height: 22px; font-size: 11px; right: 4px; bottom: 4px; border-radius: 8px; }
-    .dcv1-grid[data-density="list"] .dcv1-card-token,
-    .dcv1-grid[data-density="list"] .dcv1-card-date { display: none; }
-    .dcv1-grid[data-density="list"] .dcv1-skel-cover { grid-area: cover; grid-row: 1 / span 3; aspect-ratio: 3 / 4; }
-    .dcv1-grid[data-density="list"] .dcv1-skel i { grid-column: 2; }
     .dcv1-card-tabs {
       display: flex;
       gap: 6px;
@@ -4225,8 +4199,7 @@ function setup(ctx) {
       <div class="dcv1-density" role="group" aria-label="Card size">
         ${[
     ["comfy", "Large"],
-    ["compact", "Compact"],
-    ["list", "List"]
+    ["compact", "Compact"]
   ].map(([value, label]) => `<button type="button" data-density="${value}" aria-pressed="false">${label}</button>`).join("")}
       </div>
       <span class="dcv1-bar-count" data-bar-count></span>
@@ -4351,6 +4324,7 @@ function setup(ctx) {
     density: loadCatalogPrefs().density,
     filters: loadCatalogPrefs().filters,
     filtersOpen: false,
+    catalogTotal: 0,
     autoFill: 0,
     offset: 0,
     hasMore: false,
@@ -5766,7 +5740,7 @@ function setup(ctx) {
     toggle.dataset.active = String(count > 0);
     filterPanel.hidden = !state.filtersOpen;
     const hidden = state.characters.length - visibleCatalogCharacters().length;
-    catalogBar.querySelector("[data-bar-count]").textContent = state.characters.length ? hidden > 0 ? `${state.characters.length - hidden} shown · ${hidden} hidden` : `${state.characters.length} loaded` : "";
+    catalogBar.querySelector("[data-bar-count]").textContent = state.characters.length ? hidden > 0 ? `${state.characters.length - hidden} shown · ${hidden} hidden` : state.catalogTotal ? `${state.characters.length} of ${state.catalogTotal.toLocaleString()}` : `${state.characters.length} loaded` : "";
     if (!filterPanel.hidden) {
       for (const control of filterPanel.querySelectorAll("[data-filter]")) {
         const key = control.dataset.filter;
@@ -6175,9 +6149,17 @@ function setup(ctx) {
       if (serial !== state.serial)
         return;
       const rows = Array.isArray(payload.characters) ? payload.characters : [];
-      state.characters = reset ? rows : [...state.characters, ...rows];
+      state.characters = reset ? rows : appendUniqueCharacters(state.characters, rows);
       state.offset = Number(payload.paging?.nextOffset ?? offset + rows.length);
       state.hasMore = payload.paging?.hasMore === true;
+      const total = Number(payload.paging?.totalCount ?? payload.paging?.total ?? payload.totalCount ?? payload.total);
+      state.catalogTotal = Number.isFinite(total) && total > 0 ? total : 0;
+      console.info("[Datacat] catalog page", {
+        offset,
+        rows: rows.length,
+        sort: state.catalogSort,
+        paging: payload.paging || null
+      });
       updateCatalogStatus();
     } catch (error) {
       const message = error.retryAfter ? `${publicErrorMessage(error, "Could not load Datacat.")} Retry in ${error.retryAfter}s.` : publicErrorMessage(error, "Could not load Datacat.");
