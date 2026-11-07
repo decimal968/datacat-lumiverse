@@ -2643,6 +2643,9 @@ export function setup(ctx) {
       background: rgba(116, 73, 163, .28);
       font-size: 12px;
     }
+    .dcv1-lore-chip[data-state="missing"] { border-color: rgba(245,158,11,.55); background: rgba(245,158,11,.1); }
+    .dcv1-lore-chip[data-state="missing"] { flex-wrap: wrap; border-radius: 16px; }
+    .dcv1-lore-chip a { color: var(--dc-yellow); text-decoration: underline; }
     .dcv1-lore-chip span:last-child {
       color: var(--dc-muted);
       font-size: 11px;
@@ -5014,9 +5017,13 @@ export function setup(ctx) {
     const cardLoading = state.cardLoading.has(characterId);
     const cardError = state.cardErrors.get(characterId) || "";
     const cardBookEntries = lorebookEntryCount(findCharacterBook(loadedCard));
+    const profileLore = profileLorebookInfo(character);
     const lorebookInfo = cardBookEntries
       ? { has: true, count: cardBookEntries }
-      : profileLorebookInfo(character);
+      : profileLore;
+    // "embedded": travels with the card. "missing": Datacat lists one but the
+    // card it serves has none. "pending": card not loaded yet.
+    const loreState = cardBookEntries ? "embedded" : !profileLore.has ? "" : loadedCard ? "missing" : "pending";
     // Images written into the text render inline; the strip is only for
     // images the API lists separately, so nothing appears twice.
     const inlineUrls = new Set(
@@ -5056,10 +5063,15 @@ export function setup(ctx) {
                     )
                     .join("")}</div>`
                 : ""}
-              ${lorebookInfo.has
-                ? `<div class="dcv1-lore-chip" title="This character ships with a lorebook that is imported into Lumiverse automatically.">
+              ${loreState
+                ? `<div class="dcv1-lore-chip" data-state="${loreState}" title="${escapeAttribute(loreState === "embedded" ? "This lorebook is inside the card and is imported into Lumiverse automatically." : loreState === "missing" ? "Datacat lists a lorebook, but the card it shares with other apps does not contain it." : "Checking the card for the lorebook…")}">
                     <span aria-hidden="true">📖</span>
-                    <strong>Lorebook</strong>${lorebookInfo.count ? `<span>${lorebookInfo.count} ${lorebookInfo.count === 1 ? "entry" : "entries"}</span>` : ""}
+                    <strong>Lorebook</strong>
+                    ${loreState === "embedded"
+                      ? `<span>${cardBookEntries} ${cardBookEntries === 1 ? "entry" : "entries"} · imports automatically</span>`
+                      : loreState === "missing"
+                        ? `<span>on Datacat, not in the shared card${botUrl ? ` · <a href="${escapeAttribute(botUrl)}" target="_blank" rel="noopener noreferrer">open Datacat page</a>` : ""}</span>`
+                        : `<span>listed on Datacat</span>`}
                   </div>`
                 : ""}
               <section class="dcv1-detail-section">
@@ -5795,6 +5807,10 @@ export function setup(ctx) {
   }
 
   async function refreshCatalog({ forceLibrary = false } = {}) {
+    // Diagnostics only: shows which features this client is approved for.
+    void datacatFetch("/capabilities")
+      .then((payload) => console.info("[Datacat] capabilities:", payload))
+      .catch(() => {});
     const loads = [
       loadAccountState({ force: true }),
       loadSavedCharacters({ force: forceLibrary }),
@@ -6729,6 +6745,11 @@ export function setup(ctx) {
         throw new Error("Datacat returned an empty card.");
       }
       state.cardCache.set(id, card);
+      console.info("[Datacat] card fields:", {
+        top: Object.keys(card).sort().join(", "),
+        data: Object.keys(card.data || {}).sort().join(", "),
+        lorebookEntries: lorebookEntryCount(findCharacterBook(card)),
+      });
     } catch (error) {
       const cancelled =
         error?.code === "VERIFICATION_CANCELLED" ||
@@ -6885,7 +6906,7 @@ export function setup(ctx) {
         );
       } else if (profileListsLorebook) {
         lorebookDetail =
-          "Datacat lists a lorebook for this character, but it was not included in the card Datacat served.";
+          "Datacat lists a lorebook for this character but doesn't include it in the card it shares with other apps, so it wasn't imported. Download it from the character's Datacat page (Lore/Scripts) and add it in Lumiverse under World Books.";
       }
       setStatus("");
       setImportFeedback({
