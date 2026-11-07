@@ -947,6 +947,40 @@ var ACCOUNT_ICON = `
     <path d="M5 20c.6-3.6 3.2-5.5 7-5.5s6.4 1.9 7 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
   </svg>
 `;
+var CATALOG_PREFS_KEY = "dcv1.catalogPrefs.v1";
+var DENSITIES = ["comfy", "compact", "list"];
+function sanitizeFilters(value) {
+  const input = value && typeof value === "object" ? value : {};
+  const pick = (raw, allowed) => allowed.includes(Number(raw)) ? Number(raw) : 0;
+  return {
+    minScore: pick(input.minScore, [50, 70, 90]),
+    minTokens: pick(input.minTokens, [1000, 2000, 3000]),
+    maxTokens: pick(input.maxTokens, [2000, 4000, 6000, 8000]),
+    hideImported: input.hideImported === true,
+    hideTags: [
+      ...new Set((Array.isArray(input.hideTags) ? input.hideTags : []).map((tag) => String(tag).trim().toLowerCase().slice(0, 40)).filter(Boolean))
+    ].slice(0, 20)
+  };
+}
+function loadCatalogPrefs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CATALOG_PREFS_KEY) || "{}");
+    return {
+      density: DENSITIES.includes(raw?.density) ? raw.density : "comfy",
+      filters: sanitizeFilters(raw?.filters)
+    };
+  } catch (_) {
+    return { density: "comfy", filters: sanitizeFilters(null) };
+  }
+}
+function saveCatalogPrefs(prefs) {
+  try {
+    localStorage.setItem(CATALOG_PREFS_KEY, JSON.stringify(prefs));
+  } catch (_) {}
+}
+function activeFilterCount(filters) {
+  return (filters.minScore ? 1 : 0) + (filters.minTokens ? 1 : 0) + (filters.maxTokens ? 1 : 0) + (filters.hideImported ? 1 : 0) + (filters.hideTags.length ? 1 : 0);
+}
 var SORT_ICON = `
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M4 7h10M4 12h7M4 17h4M17 5v14M17 19l-4-4M17 19l4-4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -3525,6 +3559,181 @@ function setup(ctx) {
       color: var(--dc-muted);
       font-size: 13px;
     }
+    /* ---- Catalogue controls, densities and skeletons ---- */
+    .dcv1-catalog-bar {
+      flex: 0 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 9px 7px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+      background: var(--dc-panel);
+    }
+    .dcv1-catalog-bar[hidden] { display: none; }
+    .dcv1-density {
+      display: inline-flex;
+      padding: 2px;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 999px;
+      background: rgba(255,255,255,.04);
+    }
+    .dcv1-density button {
+      padding: 4px 11px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--dc-muted);
+      font: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .dcv1-density button[aria-pressed="true"] {
+      background: var(--dc-yellow);
+      color: #1b1320;
+    }
+    .dcv1-bar-count {
+      flex: 1 1 0;
+      min-width: 48px;
+      color: var(--dc-muted);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .dcv1-filter-toggle { padding: 4px 12px; min-height: 28px; font-size: 12px; }
+    .dcv1-filter-toggle[data-active="true"] { border-color: var(--dc-yellow); color: var(--dc-yellow); }
+    .dcv1-filter-toggle span {
+      margin-left: 6px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--dc-yellow);
+      color: #1b1320;
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .dcv1-filter-panel {
+      flex: 1 1 100%;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      padding-top: 6px;
+    }
+    .dcv1-filter-panel[hidden] { display: none; }
+    .dcv1-filter-panel label {
+      display: grid;
+      gap: 3px;
+      color: var(--dc-muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    .dcv1-filter-panel select,
+    .dcv1-filter-panel .dcv1-search {
+      min-height: 32px;
+      padding: 4px 8px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 8px;
+      background: rgba(255,255,255,.05);
+      color: inherit;
+      font: inherit;
+      font-size: 12px;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .dcv1-filter-check,
+    .dcv1-filter-wide { grid-column: 1 / -1; }
+    .dcv1-filter-check {
+      display: flex !important;
+      align-items: center;
+      gap: 8px !important;
+      text-transform: none !important;
+      letter-spacing: 0 !important;
+      font-size: 12px !important;
+    }
+    .dcv1-filter-panel .dcv1-button { grid-column: 1 / -1; justify-self: start; min-height: 30px; }
+    .dcv1-card { content-visibility: auto; contain-intrinsic-size: auto 300px; }
+    .dcv1-card-meta {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .dcv1-card-chip {
+      flex: 0 1 auto;
+      min-width: 0;
+      max-width: 100%;
+      padding: 1px 7px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 999px;
+      background: rgba(255,255,255,.05);
+      color: rgba(236,229,241,.78);
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .dcv1-card-chip[data-kind="lore"] { border-color: rgba(246,200,76,.45); color: var(--dc-yellow); }
+    .dcv1-card-actions .dcv1-button { min-height: 32px; padding-block: 5px; font-size: 13px; }
+    .dcv1-skel { min-width: 0; display: grid; gap: 7px; }
+    .dcv1-skel-cover { aspect-ratio: 3 / 4; border-radius: 11px; }
+    .dcv1-skel i { display: block; height: 10px; width: 70%; border-radius: 6px; }
+    .dcv1-skel i + i { width: 45%; }
+    .dcv1-skel-cover, .dcv1-skel i {
+      background: linear-gradient(100deg, rgba(255,255,255,.05) 30%, rgba(255,255,255,.11) 50%, rgba(255,255,255,.05) 70%) rgba(255,255,255,.04);
+      background-size: 220% 100%;
+      animation: dcv1-shimmer 1.3s linear infinite;
+    }
+    @keyframes dcv1-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .dcv1-skel-cover, .dcv1-skel i { animation: none; }
+    }
+    /* Compact: three small cards across, minimal chrome. */
+    .dcv1-grid[data-density="compact"] {
+      grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+      gap: 8px 6px;
+    }
+    @media (max-width: 720px) {
+      .dcv1-grid[data-density="compact"] { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px 5px; }
+    }
+    .dcv1-grid[data-density="compact"] .dcv1-card-meta,
+    .dcv1-grid[data-density="compact"] .dcv1-card-date,
+    .dcv1-grid[data-density="compact"] .dcv1-author-label { display: none; }
+    .dcv1-grid[data-density="compact"] .dcv1-name { font-size: 11px; }
+    .dcv1-grid[data-density="compact"] .dcv1-card-author { font-size: 10px; }
+    .dcv1-grid[data-density="compact"] .dcv1-card-score { min-width: 34px; min-height: 22px; font-size: 11px; border-radius: 8px; }
+    .dcv1-grid[data-density="compact"] .dcv1-card-token { display: none; }
+    .dcv1-grid[data-density="compact"] .dcv1-card-actions .dcv1-button { min-height: 26px; font-size: 11px; padding: 3px 4px; }
+    /* List: thumbnail, text and a small action button per row. */
+    .dcv1-grid[data-density="list"] { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    .dcv1-grid[data-density="list"] .dcv1-card,
+    .dcv1-grid[data-density="list"] .dcv1-skel {
+      display: grid;
+      grid-template-columns: 78px minmax(0, 1fr) auto;
+      grid-template-areas: "cover name actions" "cover author actions" "cover meta actions";
+      grid-template-rows: auto auto 1fr;
+      align-items: start;
+      column-gap: 11px;
+      padding: 7px;
+      border-radius: 12px;
+      background: rgba(255,255,255,.035);
+      contain-intrinsic-size: auto 112px;
+    }
+    .dcv1-grid[data-density="list"] .dcv1-cover-wrap { grid-area: cover; grid-row: 1 / span 3; border-radius: 9px; }
+    .dcv1-grid[data-density="list"] .dcv1-card-body { display: contents; }
+    .dcv1-grid[data-density="list"] .dcv1-name { grid-area: name; margin-top: 2px; font-size: 14px; }
+    .dcv1-grid[data-density="list"] .dcv1-card-author { grid-area: author; }
+    .dcv1-grid[data-density="list"] .dcv1-card-meta { grid-area: meta; margin-top: 6px; flex-wrap: wrap; }
+    .dcv1-grid[data-density="list"] .dcv1-card-actions { grid-area: actions; align-self: center; display: grid; gap: 6px; width: 86px; }
+    .dcv1-grid[data-density="list"] .dcv1-card-score { min-width: 36px; min-height: 22px; font-size: 11px; right: 4px; bottom: 4px; border-radius: 8px; }
+    .dcv1-grid[data-density="list"] .dcv1-card-token,
+    .dcv1-grid[data-density="list"] .dcv1-card-date { display: none; }
+    .dcv1-grid[data-density="list"] .dcv1-skel-cover { grid-area: cover; grid-row: 1 / span 3; aspect-ratio: 3 / 4; }
+    .dcv1-grid[data-density="list"] .dcv1-skel i { grid-column: 2; }
     .dcv1-card-tabs {
       display: flex;
       gap: 6px;
@@ -4012,6 +4221,39 @@ function setup(ctx) {
         </div>
       </div>
     </div>
+    <div class="dcv1-catalog-bar" data-catalog-bar hidden>
+      <div class="dcv1-density" role="group" aria-label="Card size">
+        ${[
+    ["comfy", "Large"],
+    ["compact", "Compact"],
+    ["list", "List"]
+  ].map(([value, label]) => `<button type="button" data-density="${value}" aria-pressed="false">${label}</button>`).join("")}
+      </div>
+      <span class="dcv1-bar-count" data-bar-count></span>
+      <button class="dcv1-button dcv1-filter-toggle" type="button" data-filters-toggle aria-expanded="false">Filters<span data-filter-badge hidden></span></button>
+      <div class="dcv1-filter-panel" data-filter-panel hidden>
+        <label>Rating
+          <select data-filter="minScore">
+            <option value="0">Any</option><option value="50">50%+</option><option value="70">70%+</option><option value="90">90%+</option>
+          </select>
+        </label>
+        <label>Min tokens
+          <select data-filter="minTokens">
+            <option value="0">Any</option><option value="1000">1k+</option><option value="2000">2k+</option><option value="3000">3k+</option>
+          </select>
+        </label>
+        <label>Max tokens
+          <select data-filter="maxTokens">
+            <option value="0">Any</option><option value="2000">2k</option><option value="4000">4k</option><option value="6000">6k</option><option value="8000">8k</option>
+          </select>
+        </label>
+        <label class="dcv1-filter-check"><input type="checkbox" data-filter="hideImported"> Hide characters I already imported</label>
+        <label class="dcv1-filter-wide">Hide tags
+          <input class="dcv1-search" type="text" data-filter="hideTags" placeholder="e.g. netorare, yandere" autocomplete="off">
+        </label>
+        <button class="dcv1-button" type="button" data-filters-reset>Reset</button>
+      </div>
+    </div>
     <div class="dcv1-filter-chips" data-filter-chips hidden></div>
     <button class="dcv1-tag-scrim" type="button" data-tag-scrim data-tags-close aria-label="Close tag browser"></button>
     <aside class="dcv1-tag-panel" data-tag-panel data-open="false" aria-hidden="true" aria-label="Browse Datacat tags">
@@ -4055,6 +4297,9 @@ function setup(ctx) {
   document.body.append(modalHost);
   const grid = root.querySelector("[data-grid]");
   const searchRow = root.querySelector("[data-search-row]");
+  const catalogBar = root.querySelector("[data-catalog-bar]");
+  const filterPanel = root.querySelector("[data-filter-panel]");
+  const gridNodes = new Map;
   const viewModeButtons = [
     ...root.querySelectorAll("[data-view-mode]")
   ];
@@ -4103,6 +4348,10 @@ function setup(ctx) {
     query: String(persistedBrowserState?.query || "").slice(0, 120),
     catalogSort: normalizeCatalogSort(persistedBrowserState?.catalogSort),
     catalogSortLoading: false,
+    density: loadCatalogPrefs().density,
+    filters: loadCatalogPrefs().filters,
+    filtersOpen: false,
+    autoFill: 0,
     offset: 0,
     hasMore: false,
     loading: false,
@@ -4990,6 +5239,12 @@ function setup(ctx) {
     const hasScore = Number.isFinite(Number(character.score));
     const publishedValue = character.publishedAt || character.updatedAt;
     const publishedBadge = compactDateBadge(publishedValue);
+    const hasLore = profileLorebookInfo(character).has;
+    const cardTags = characterTags(character).slice(0, hasLore ? 1 : 2);
+    const cardMeta = [
+      hasLore ? `<span class="dcv1-card-chip" data-kind="lore" title="Includes a lorebook">\uD83D\uDCD6 Lore</span>` : "",
+      ...cardTags.map((tag) => `<span class="dcv1-card-chip">${escapeHtml(tag)}</span>`)
+    ].join("");
     return `
       <article class="dcv1-card" tabindex="0" data-card="${escapeAttribute(id)}" data-added="${isSaved}">
         <div class="dcv1-cover-wrap">
@@ -5005,6 +5260,7 @@ function setup(ctx) {
             <span class="dcv1-author-label">Author</span>
             ${creatorRef ? `<button class="dcv1-creator-link" type="button" data-creator-ref="${escapeAttribute(creatorRef)}">${escapeHtml(creator)}</button>` : escapeHtml(creator)}
           </div>
+          ${cardMeta ? `<div class="dcv1-card-meta">${cardMeta}</div>` : ""}
           <div class="dcv1-card-actions">
             ${isSaved ? `
                   <button class="dcv1-button" data-added type="button" disabled>✓ Added</button>
@@ -5420,6 +5676,172 @@ function setup(ctx) {
         </div>
       </section>`;
   }
+  function persistCatalogPrefs() {
+    saveCatalogPrefs({ density: state.density, filters: state.filters });
+  }
+  function passesCatalogFilters(character) {
+    const filters = state.filters;
+    if (filters.hideImported && savedLumiverseId(normalizeId(character.id)))
+      return false;
+    if (filters.minScore && !(Number(character.score) >= filters.minScore))
+      return false;
+    const tokens = Number(character.totalTokens);
+    if (filters.minTokens && !(tokens >= filters.minTokens))
+      return false;
+    if (filters.maxTokens && !(tokens <= filters.maxTokens))
+      return false;
+    if (filters.hideTags.length) {
+      const tags = characterTags(character).map((tag) => tag.toLowerCase());
+      if (tags.some((tag) => filters.hideTags.includes(tag)))
+        return false;
+    }
+    return true;
+  }
+  function visibleCatalogCharacters() {
+    return activeFilterCount(state.filters) ? state.characters.filter(passesCatalogFilters) : state.characters;
+  }
+  function setGridHtml(html) {
+    gridNodes.clear();
+    grid.dataset.mode = "html";
+    grid.innerHTML = html;
+  }
+  function skeletonCards() {
+    return Array.from({ length: state.density === "compact" ? 6 : 4 }).map(() => '<div class="dcv1-skel" aria-hidden="true"><div class="dcv1-skel-cover"></div><i></i><i></i></div>').join("");
+  }
+  function reconcileCards(items, withSkeleton) {
+    if (grid.dataset.mode !== "cards") {
+      grid.replaceChildren();
+      gridNodes.clear();
+      grid.dataset.mode = "cards";
+    }
+    for (const node of [...grid.children]) {
+      if (!node.classList.contains("dcv1-card"))
+        node.remove();
+    }
+    const template = document.createElement("template");
+    const keep = new Set;
+    let previous = null;
+    for (const character of items) {
+      const id = normalizeId(character.id);
+      const html = renderCard(character).trim();
+      let entry = gridNodes.get(id);
+      if (!entry || entry.html !== html) {
+        template.innerHTML = html;
+        const element = template.content.firstElementChild;
+        if (entry?.element?.isConnected)
+          entry.element.replaceWith(element);
+        entry = { html, element };
+        gridNodes.set(id, entry);
+      }
+      keep.add(id);
+      const expected = previous ? previous.nextElementSibling : grid.firstElementChild;
+      if (entry.element !== expected)
+        grid.insertBefore(entry.element, expected);
+      previous = entry.element;
+    }
+    for (const [id, entry] of gridNodes) {
+      if (!keep.has(id)) {
+        entry.element.remove();
+        gridNodes.delete(id);
+      }
+    }
+    if (withSkeleton)
+      grid.insertAdjacentHTML("beforeend", skeletonCards());
+  }
+  function syncCatalogBar() {
+    const isCatalog = state.viewMode === "catalog";
+    catalogBar.hidden = !isCatalog;
+    grid.dataset.density = isCatalog ? state.density : "";
+    if (!isCatalog)
+      return;
+    for (const button of catalogBar.querySelectorAll("[data-density]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.density === state.density));
+    }
+    const count = activeFilterCount(state.filters);
+    const badge = catalogBar.querySelector("[data-filter-badge]");
+    badge.hidden = !count;
+    badge.textContent = String(count);
+    const toggle = catalogBar.querySelector("[data-filters-toggle]");
+    toggle.setAttribute("aria-expanded", String(state.filtersOpen));
+    toggle.dataset.active = String(count > 0);
+    filterPanel.hidden = !state.filtersOpen;
+    const hidden = state.characters.length - visibleCatalogCharacters().length;
+    catalogBar.querySelector("[data-bar-count]").textContent = state.characters.length ? hidden > 0 ? `${state.characters.length - hidden} shown · ${hidden} hidden` : `${state.characters.length} loaded` : "";
+    if (!filterPanel.hidden) {
+      for (const control of filterPanel.querySelectorAll("[data-filter]")) {
+        const key = control.dataset.filter;
+        if (control.type === "checkbox")
+          control.checked = state.filters[key] === true;
+        else if (key === "hideTags") {
+          if (document.activeElement !== control)
+            control.value = state.filters.hideTags.join(", ");
+        } else
+          control.value = String(state.filters[key]);
+      }
+    }
+  }
+  function afterCatalogRender() {
+    if (state.viewMode !== "catalog")
+      return;
+    const filtering = activeFilterCount(state.filters) > 0;
+    const visible = filtering ? visibleCatalogCharacters().length : state.characters.length;
+    if (!filtering || visible >= 10) {
+      state.autoFill = 0;
+      return;
+    }
+    if (state.hasMore && !state.loading && !state.loadingMore && !state.error && !state.loadMoreError && state.autoFill < 6) {
+      state.autoFill += 1;
+      setTimeout(() => {
+        if (state.viewMode === "catalog" && state.hasMore && !state.loading && !state.loadingMore) {
+          loadCharacters();
+        }
+      }, 0);
+    }
+  }
+  catalogBar.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target)
+      return;
+    const density = target.closest("[data-density]");
+    if (density) {
+      state.density = density.dataset.density;
+      persistCatalogPrefs();
+      render();
+      return;
+    }
+    if (target.closest("[data-filters-toggle]")) {
+      state.filtersOpen = !state.filtersOpen;
+      render();
+      return;
+    }
+    if (target.closest("[data-filters-reset]")) {
+      state.filters = sanitizeFilters(null);
+      state.autoFill = 0;
+      persistCatalogPrefs();
+      render();
+    }
+  });
+  const applyFilterControl = (control) => {
+    const key = control.dataset.filter;
+    if (!key)
+      return;
+    const next = { ...state.filters };
+    if (control.type === "checkbox")
+      next[key] = control.checked;
+    else if (key === "hideTags")
+      next.hideTags = control.value.split(",");
+    else
+      next[key] = Number(control.value);
+    state.filters = sanitizeFilters(next);
+    state.autoFill = 0;
+    persistCatalogPrefs();
+    render();
+  };
+  filterPanel.addEventListener("change", (event) => {
+    if (event.target instanceof HTMLElement && event.target.matches("[data-filter]")) {
+      applyFilterControl(event.target);
+    }
+  });
   function render() {
     const isFresh = state.viewMode === "fresh";
     const isImports = state.viewMode === "imports";
@@ -5434,30 +5856,37 @@ function setup(ctx) {
     if (isFresh) {
       const freshCount = freshCharacterCount();
       if ((state.initializing || state.freshLoading) && freshCount === 0) {
-        grid.innerHTML = renderLoadingState("Loading fresh discoveries…");
+        setGridHtml(renderLoadingState("Loading fresh discoveries…"));
       } else if (state.freshError && freshCount === 0) {
-        grid.innerHTML = `<div class="dcv1-empty" data-error>${escapeHtml(state.freshError)}</div>`;
+        setGridHtml(`<div class="dcv1-empty" data-error>${escapeHtml(state.freshError)}</div>`);
       } else if (freshCount === 0) {
-        grid.innerHTML = `<div class="dcv1-empty">No newly discovered characters are available.</div>`;
+        setGridHtml(`<div class="dcv1-empty">No newly discovered characters are available.</div>`);
       } else {
-        grid.innerHTML = [
+        setGridHtml([
           renderFreshWindow("New in the last 24 hours", `${state.freshWindows.last24h.length} loaded`, state.freshWindows.last24h),
           renderFreshWindow("Discovered this week", `${state.freshWindows.thisWeek.length} loaded`, state.freshWindows.thisWeek)
-        ].join("");
+        ].join(""));
       }
     } else if (isImports) {
-      grid.innerHTML = renderImports();
+      setGridHtml(renderImports());
     } else {
       if ((state.initializing || state.loading) && state.characters.length === 0) {
-        grid.innerHTML = renderLoadingState("Loading the catalog…");
+        setGridHtml(renderLoadingState("Loading the catalog…"));
       } else if (state.error) {
-        grid.innerHTML = `<div class="dcv1-empty" data-error>${escapeHtml(state.error)}</div>`;
+        setGridHtml(`<div class="dcv1-empty" data-error>${escapeHtml(state.error)}</div>`);
       } else if (state.characters.length === 0) {
-        grid.innerHTML = `<div class="dcv1-empty">No characters found.</div>`;
+        setGridHtml(`<div class="dcv1-empty">No characters found.</div>`);
       } else {
-        grid.innerHTML = state.characters.map(renderCard).join("");
+        const visible = visibleCatalogCharacters();
+        if (visible.length === 0) {
+          setGridHtml(`<div class="dcv1-empty">${state.hasMore || state.loadingMore ? "Searching for matches…" : "Nothing matches your filters."}</div>`);
+        } else {
+          reconcileCards(visible, state.loadingMore);
+        }
       }
     }
+    syncCatalogBar();
+    afterCatalogRender();
     const hasMore = isImports ? false : isFresh ? freshHasMore() : state.hasMore;
     const loading = isImports ? state.savedLoading : isFresh ? state.freshLoading : state.loading;
     const loadingMore = isImports ? false : isFresh ? state.freshLoadingMore : state.loadingMore;
