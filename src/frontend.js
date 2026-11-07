@@ -3590,6 +3590,10 @@ export function setup(ctx) {
     filters: loadCatalogPrefs().filters,
     filtersOpen: false,
     catalogTotal: 0,
+    // "Freshly Added" catalogue = Datacat's Fresh feed first (same order as the
+    // Fresh tab), then older characters by first-published date.
+    mix: null,
+    freshFeedBroken: false,
     autoFill: 0,
     offset: 0,
     hasMore: false,
@@ -5963,6 +5967,12 @@ export function setup(ctx) {
     }
     if (!preserveExisting) render();
     try {
+      if (catalogUsesFreshFeed()) {
+        await loadFreshCatalogPage(reset);
+        if (serial !== state.serial) return;
+        updateCatalogStatus();
+        return;
+      }
       const offset = reset ? 0 : state.offset;
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
@@ -6013,6 +6023,95 @@ export function setup(ctx) {
       state.loadingMore = false;
       render();
     }
+  }
+
+  function catalogUsesFreshFeed() {
+    return (
+      state.catalogSort === "fresh" &&
+      !state.query &&
+      state.selectedTagIds.size === 0 &&
+      !state.freshFeedBroken
+    );
+  }
+
+  function composeFreshCatalog() {
+    const { last24h, thisWeek, tail } = state.mix;
+    return appendUniqueCharacters(
+      appendUniqueCharacters(last24h, thisWeek),
+      tail,
+    );
+  }
+
+  async function loadFreshCatalogPage(reset) {
+    if (reset || !state.mix) {
+      state.mix = {
+        last24h: [],
+        thisWeek: [],
+        tail: [],
+        p24: { nextOffset: 0, hasMore: true },
+        pWeek: { nextOffset: 0, hasMore: true },
+        phase: "fresh",
+        tailOffset: 0,
+        tailHasMore: true,
+      };
+    }
+    const mix = state.mix;
+    try {
+      const fetchTail = async () => {
+        const payload = await datacatFetch(
+          `/characters?${new URLSearchParams({
+            limit: String(PAGE_SIZE),
+            offset: String(mix.tailOffset),
+            sort: "first_published",
+          })}`,
+        );
+        const rows = Array.isArray(payload.characters) ? payload.characters : [];
+        mix.tail = appendUniqueCharacters(mix.tail, rows);
+        mix.tailOffset = Number(payload.paging?.nextOffset ?? mix.tailOffset + rows.length);
+        mix.tailHasMore = payload.paging?.hasMore === true && rows.length > 0;
+      };
+      if (mix.phase === "fresh") {
+        const payload = await datacatFetch(
+          `/fresh?${new URLSearchParams({
+            limit: String(PAGE_SIZE),
+            offset24: String(mix.p24.nextOffset),
+            offsetWeek: String(mix.pWeek.nextOffset),
+            sort: "fresh",
+          })}`,
+        );
+        const w24 = payload.windows?.last24h || {};
+        const wWeek = payload.windows?.thisWeek || {};
+        const rows24 = Array.isArray(w24.characters) ? w24.characters : [];
+        const rowsWeek = Array.isArray(wWeek.characters) ? wWeek.characters : [];
+        mix.last24h = appendUniqueCharacters(mix.last24h, rows24);
+        mix.thisWeek = appendUniqueCharacters(mix.thisWeek, rowsWeek);
+        mix.p24 = normalizeFreshPaging(w24, mix.p24.nextOffset, rows24.length);
+        mix.pWeek = normalizeFreshPaging(wWeek, mix.pWeek.nextOffset, rowsWeek.length);
+        if (!mix.p24.hasMore && !mix.pWeek.hasMore) mix.phase = "tail";
+        // Fresh feed exhausted: continue straight into older characters.
+        if (mix.phase === "tail") await fetchTail();
+      } else {
+        await fetchTail();
+      }
+    } catch (error) {
+      // No usable Fresh feed: fall back to the plain catalogue sort.
+      if (reset && (error.status === 400 || error.status === 404 || error.status === 422)) {
+        state.freshFeedBroken = true;
+        state.mix = null;
+        window.setTimeout(() => void loadCharacters({ reset: true }), 0);
+        return;
+      }
+      throw error;
+    }
+    state.characters = composeFreshCatalog();
+    state.hasMore = mix.phase === "fresh" || mix.tailHasMore;
+    state.catalogTotal = 0;
+    console.info("[Datacat] fresh catalogue", {
+      phase: mix.phase,
+      last24h: mix.last24h.length,
+      thisWeek: mix.thisWeek.length,
+      tail: mix.tail.length,
+    });
   }
 
   function appendUniqueCharacters(existing, incoming) {
@@ -6565,38 +6664,94 @@ export function setup(ctx) {
 
       const deadline =
         Date.now() + Number(payload.expiresIn || 300) * 1000;
+      const pollEveryMs = Math.max(1, Number(payload.interval || 3)) * 1000;
       const lease = await new Promise((resolve, reject) => {
         verificationReject = reject;
-        const schedulePoll = () => {
-          if (generation !== verificationGeneration) return;
+        let polling = false;
+        let transientFailures = 0;
+        let closedChecks = 0;
+        let lastActivity = Date.now();
+        let finished = false;
+        const finish = (fn, value) => {
+          if (finished) return;
+          finished = true;
+          window.clearTimeout(hardStop);
+          window.clearInterval(watchdog);
+          document.removeEventListener("visibilitychange", wake);
+          window.removeEventListener("focus", wake);
+          window.removeEventListener("pageshow", wake);
+          fn(value);
+        };
+        const schedulePoll = (delay = pollEveryMs) => {
+          if (finished || generation !== verificationGeneration) return;
+          window.clearTimeout(verificationPollTimer);
           verificationPollTimer = window.setTimeout(() => {
             verificationPollTimer = 0;
             void poll();
-          }, Math.max(1, Number(payload.interval || 3)) * 1000);
+          }, delay);
+        };
+        // Coming back from the pop-up tab: check right away instead of
+        // waiting for a timer the browser may have throttled.
+        const wake = () => {
+          if (document.visibilityState === "hidden" || polling) return;
+          schedulePoll(0);
+        };
+        document.addEventListener("visibilitychange", wake);
+        window.addEventListener("focus", wake);
+        window.addEventListener("pageshow", wake);
+        // Whatever happens to the poll chain, never hang past the expiry.
+        const hardStop = window.setTimeout(
+          () => finish(reject, new Error("The Datacat security-check request expired.")),
+          Math.max(1000, deadline - Date.now()) + 1500,
+        );
+        // If the poll chain has gone quiet (frozen tab, lost response), restart it.
+        const watchdog = window.setInterval(() => {
+          if (!finished && Date.now() - lastActivity > 25_000) {
+            polling = false;
+            schedulePoll(0);
+          }
+        }, 5000);
+        const cancelled = () => {
+          const closed = new Error("Datacat verification cancelled.");
+          closed.code = "VERIFICATION_WINDOW_CLOSED";
+          return closed;
         };
         const poll = async () => {
-          if (generation !== verificationGeneration) return;
+          if (finished || generation !== verificationGeneration || polling) return;
           if (Date.now() >= deadline) {
-            reject(new Error("The Datacat security-check request expired."));
+            finish(reject, new Error("The Datacat security-check request expired."));
             return;
           }
+          polling = true;
+          lastActivity = Date.now();
           try {
-            const statusPayload = await datacatFetch(
-              `/verifications/${encodeURIComponent(
-                payload.verificationId,
-              )}`,
-            );
+            const statusPayload = await Promise.race([
+              datacatFetch(`/verifications/${encodeURIComponent(payload.verificationId)}`),
+              new Promise((_, fail) =>
+                window.setTimeout(() => fail(Object.assign(new Error("poll timeout"), { transient: true })), 12_000),
+              ),
+            ]);
+            if (finished || generation !== verificationGeneration) return;
+            transientFailures = 0;
+            lastActivity = Date.now();
             const verificationStatus = String(
               statusPayload.verification?.status || "",
             ).toLowerCase();
-            if (generation !== verificationGeneration) return;
             if (verificationStatus === "pending") {
+              // Datacat may close its own window the moment the check passes,
+              // slightly before the status flips. Give it a few polls.
               if (activeVerificationPopup?.closed) {
-                const closed = new Error("Datacat verification cancelled.");
-                closed.code = "VERIFICATION_WINDOW_CLOSED";
-                reject(closed);
+                closedChecks += 1;
+                if (closedChecks > 3) {
+                  finish(reject, cancelled());
+                  return;
+                }
+                polling = false;
+                schedulePoll(1000);
                 return;
               }
+              closedChecks = 0;
+              polling = false;
               schedulePoll();
               return;
             }
@@ -6608,9 +6763,7 @@ export function setup(ctx) {
               );
             }
             const token = await datacatFetch(
-              `/verifications/${encodeURIComponent(
-                payload.verificationId,
-              )}/token`,
+              `/verifications/${encodeURIComponent(payload.verificationId)}/token`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -6618,22 +6771,28 @@ export function setup(ctx) {
               },
             );
             if (!token.leaseAvailable || !token.expiresAt) {
-              reject(
-                new Error(
-                  "Datacat returned no usable security-check lease.",
-                ),
-              );
+              finish(reject, new Error("Datacat returned no usable security-check lease."));
               return;
             }
-            resolve({
-              expiresAt: token.expiresAt,
-            });
+            finish(resolve, { expiresAt: token.expiresAt });
           } catch (error) {
-            if (error.code === "VERIFICATION_PENDING") {
-              schedulePoll();
+            if (finished || generation !== verificationGeneration) return;
+            const retryable =
+              error.code === "VERIFICATION_PENDING" ||
+              error.transient === true ||
+              /timed out|network|fetch/i.test(String(error.message)) ||
+              error.status === 429 ||
+              (error.status >= 500 && error.status < 600);
+            if (retryable && transientFailures < 5) {
+              transientFailures += 1;
+              polling = false;
+              const wait = error.retryAfter ? Number(error.retryAfter) * 1000 : pollEveryMs;
+              schedulePoll(Math.min(Math.max(wait, 1000), 15_000));
               return;
             }
-            reject(error);
+            finish(reject, error);
+          } finally {
+            polling = false;
           }
         };
         void poll();
@@ -6663,8 +6822,18 @@ export function setup(ctx) {
       return existing;
     }
     if (verificationPromise) {
-      closeVerificationPopup(popup);
-      return verificationPromise;
+      const staleWindow = !activeVerificationPopup || activeVerificationPopup.closed;
+      if (popup && !popup.closed && staleWindow) {
+        // The earlier attempt lost its window (closed or never opened one):
+        // replace it with this fresh attempt instead of joining a stuck one.
+        cancelImportVerification();
+        try {
+          await verificationPromise;
+        } catch (_) {}
+      } else {
+        closeVerificationPopup(popup);
+        return verificationPromise;
+      }
     }
     verificationPromise = startImportVerification(
       requestedName,
