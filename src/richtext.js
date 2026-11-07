@@ -112,7 +112,7 @@ function luminance({ r, g, b }) {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-const PANEL_LUM = luminance({ r: 23, g: 16, b: 31 });
+const PANEL_LUM = luminance({ r: 18, g: 18, b: 20 });
 const cssColor = (c) => `rgba(${c.r},${c.g},${c.b},${Math.round(c.a * 100) / 100})`;
 
 // ── Style declarations ──────────────────────────────────────────────────────
@@ -252,7 +252,7 @@ function styleAttribute(decls) {
     const text = parseColor(decls.get("color"));
     if (!text || text.a < 0.4 || contrast(luminance(text), baseLum) < 3) decls.delete("color");
   }
-  if (solidBg && baseLum > 0.35 && !decls.has("color")) decls.set("color", "#17101f");
+  if (solidBg && baseLum > 0.35 && !decls.has("color")) decls.set("color", "#121214");
   const css = [...decls].map(([k, v]) => `${k}:${v}`).join(";");
   return css ? ` style="${esc(css)}"` : "";
 }
