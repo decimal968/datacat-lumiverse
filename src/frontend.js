@@ -5824,6 +5824,7 @@ export function setup(ctx) {
 
   async function refreshCatalog({ forceLibrary = false } = {}) {
     // Diagnostics only: shows which features this client is approved for.
+    prepareVerification();
     void datacatFetch("/capabilities")
       .then((payload) => console.info("[Datacat] capabilities:", payload))
       .catch(() => {});
@@ -6446,6 +6447,8 @@ export function setup(ctx) {
     if (getVerificationLease() || !state.verificationDeclined) {
       void loadCardPreview(normalizeId(id));
     }
+    // Have the next security check ready before it is needed.
+    prepareVerification();
     void loadCharacterCommunity(id, { quiet: true });
     try {
       const profilePath = characterClientPath(summary || { id }, "profile");
@@ -6618,6 +6621,7 @@ export function setup(ctx) {
     verificationPollTimer = 0;
     closeVerificationPopup(activeVerificationPopup);
     activeVerificationPopup = null;
+    window.setTimeout(prepareVerification, 300);
     const reject = verificationReject;
     verificationReject = null;
     if (reject) {
@@ -6627,6 +6631,53 @@ export function setup(ctx) {
     }
   }
 
+  // A security-check session created ahead of time, so the pop-up can open
+  // straight on Datacat's page. Opening a blank window and filling it in later
+  // fails on phones: the pop-up takes over the screen, the browser pauses this
+  // tab, and the window sits on "Preparing verification…" until you return.
+  let preparedVerification = null;
+  const preparedByPopup = new WeakMap();
+
+  function prepareVerification() {
+    if (getVerificationLease() || verificationPromise) return;
+    const current = preparedVerification;
+    if (current && (!current.expiresAt || current.expiresAt - Date.now() > 60_000)) return;
+    const entry = { url: "", payload: null, expiresAt: 0 };
+    preparedVerification = entry;
+    datacatFetch("/verifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: VERIFICATION_ACTION,
+        clientName: "Lumiverse",
+        clientVersion: VERSION,
+      }),
+    })
+      .then((payload) => {
+        entry.url = normalizeVerificationUrl(payload.verificationUriComplete) || "";
+        entry.payload = payload;
+        entry.expiresAt = Date.now() + Number(payload.expiresIn || 300) * 1000;
+        if (!entry.url && preparedVerification === entry) preparedVerification = null;
+      })
+      .catch(() => {
+        if (preparedVerification === entry) preparedVerification = null;
+      });
+  }
+
+  // Must be called straight from a tap (synchronously) so the browser allows it.
+  function openVerificationWindow() {
+    const entry = preparedVerification;
+    const usable = entry?.url && entry.expiresAt - Date.now() > 45_000;
+    if (usable) preparedVerification = null;
+    const popup = window.open(
+      usable ? entry.url : verificationPopupWaitingUrl(),
+      "datacat-client-verification",
+      "popup=yes,width=560,height=720",
+    );
+    if (popup && usable) preparedByPopup.set(popup, entry);
+    return popup;
+  }
+
   async function startImportVerification(requestedName, popup = null) {
     const generation = ++verificationGeneration;
     if (!popup || popup.closed) {
@@ -6634,15 +6685,19 @@ export function setup(ctx) {
     }
     activeVerificationPopup = popup;
     try {
-      const payload = await datacatFetch("/verifications", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: VERIFICATION_ACTION,
-          clientName: "Lumiverse",
-          clientVersion: VERSION,
-        }),
-      });
+      const prepared = preparedByPopup.get(popup);
+      preparedByPopup.delete(popup);
+      const payload =
+        prepared?.payload ||
+        (await datacatFetch("/verifications", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: VERIFICATION_ACTION,
+            clientName: "Lumiverse",
+            clientVersion: VERSION,
+          }),
+        }));
       const verificationUrl = normalizeVerificationUrl(
         payload.verificationUriComplete,
       );
@@ -6651,12 +6706,14 @@ export function setup(ctx) {
           "Datacat returned an invalid security-check address.",
         );
       }
-      try {
-        if (popup.closed) throw verificationPopupBlockedError();
-        popup.location.replace(verificationUrl);
-        popup.focus();
-      } catch (_) {
-        throw verificationPopupBlockedError();
+      if (!prepared) {
+        try {
+          if (popup.closed) throw verificationPopupBlockedError();
+          popup.location.replace(verificationUrl);
+          popup.focus();
+        } catch (_) {
+          throw verificationPopupBlockedError();
+        }
       }
       activeVerificationPopup = popup;
       setStatus("");
@@ -6906,11 +6963,7 @@ export function setup(ctx) {
     if (!existingLease && state.cardLoading.size) return;
     const popup = existingLease
       ? null
-      : window.open(
-          verificationPopupWaitingUrl(),
-          "datacat-client-verification",
-          "popup=yes,width=560,height=720",
-        );
+      : openVerificationWindow();
     state.cardErrors.delete(id);
     if (!existingLease && !popup) {
       state.verificationDeclined = true;
@@ -6980,11 +7033,7 @@ export function setup(ctx) {
     const existingLease = getVerificationLease();
     const verificationPopup = existingLease
       ? null
-      : window.open(
-          verificationPopupWaitingUrl(),
-          "datacat-client-verification",
-          "popup=yes,width=560,height=720",
-        );
+      : openVerificationWindow();
     if (!existingLease && !verificationPopup) {
       const error = verificationPopupBlockedError();
       const message = publicErrorMessage(
