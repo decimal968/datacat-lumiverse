@@ -123,6 +123,9 @@ function activeFilterCount(filters) {
   );
 }
 
+const DENSITY_LARGE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><rect x="3" y="4" width="8" height="16" rx="2"/><rect x="13" y="4" width="8" height="16" rx="2"/></svg>`;
+const DENSITY_COMPACT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><rect x="2.5" y="4" width="5" height="7" rx="1.2"/><rect x="9.5" y="4" width="5" height="7" rx="1.2"/><rect x="16.5" y="4" width="5" height="7" rx="1.2"/><rect x="2.5" y="13" width="5" height="7" rx="1.2"/><rect x="9.5" y="13" width="5" height="7" rx="1.2"/><rect x="16.5" y="13" width="5" height="7" rx="1.2"/></svg>`;
+const FILTER_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16l-6 7.5V19l-4-2v-4.5z"/></svg>`;
 const SORT_ICON = `
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M4 7h10M4 12h7M4 17h4M17 5v14M17 19l-4-4M17 19l4-4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -888,21 +891,30 @@ export function setup(ctx) {
       display: flex;
       align-items: stretch;
       gap: 2px;
-      padding: 4px 8px 0;
+      padding: 0 4px 0 6px;
       border-bottom: 1px solid rgba(255,255,255,.07);
       background: var(--dc-panel);
     }
     .dcv1-view-tabs .dcv1-tag-toggle {
       margin-left: auto;
       align-self: center;
-      min-height: 25px;
+      min-height: 24px;
       padding: 0 9px;
       border-radius: 999px;
       font-size: 10px;
     }
+    .dcv1-view-tabs .dcv1-toolbar-icon,
+    .dcv1-view-tabs .dcv1-toolbar-close {
+      align-self: center;
+      width: 28px;
+      min-height: 28px;
+    }
+    .dcv1-view-tabs .dcv1-toolbar-icon svg { width: 20px; height: 20px; }
+    .dcv1-view-tabs .dcv1-toolbar-close { font-size: 24px; line-height: 1; }
     .dcv1-view-tab {
-      min-width: 76px;
-      min-height: 29px;
+      min-width: 64px;
+      min-height: 32px;
+      padding: 0 8px;
       color: var(--dc-muted);
       border: 0;
       border-bottom: 2px solid transparent;
@@ -919,14 +931,15 @@ export function setup(ctx) {
     .dcv1-search-row {
       flex: 0 0 auto;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 42px;
-      gap: 6px;
+      grid-template-columns: minmax(0, 1fr) auto auto auto;
+      gap: 4px;
       align-items: center;
-      padding: 7px 8px;
+      padding: 5px 6px;
       border-bottom: 1px solid rgba(255,255,255,.07);
       background: var(--dc-panel);
     }
     .dcv1-search-row[hidden] { display: none; }
+    .dcv1-search-row .dcv1-search { min-height: 34px; }
     .dcv1-search-shell {
       position: relative;
       min-width: 0;
@@ -967,15 +980,15 @@ export function setup(ctx) {
     .dcv1-search-clear[hidden] { display: none; }
     .dcv1-catalog-sort {
       position: relative;
-      width: 42px;
-      height: 38px;
+      width: 34px;
+      height: 34px;
       display: grid;
       place-items: center;
     }
     .dcv1-sort-trigger {
       position: relative;
-      width: 42px;
-      height: 38px;
+      width: 34px;
+      height: 34px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -991,19 +1004,19 @@ export function setup(ctx) {
       outline: none;
     }
     .dcv1-sort-trigger svg {
-      width: 28px;
-      height: 28px;
+      width: 22px;
+      height: 22px;
     }
     .dcv1-sort-trigger[data-loading="true"] { cursor: wait; }
     .dcv1-sort-trigger[data-loading="true"] svg { visibility: hidden; }
     .dcv1-sort-spinner {
       position: absolute;
-      top: 13px;
-      left: 10px;
+      inset: 0;
+      margin: auto;
       z-index: 0;
       box-sizing: border-box;
-      width: 22px;
-      height: 22px;
+      width: 18px;
+      height: 18px;
       border: 2px solid rgba(255, 45, 154, .3);
       border-top-color: var(--dc-accent);
       border-radius: 999px;
@@ -1013,9 +1026,9 @@ export function setup(ctx) {
     .dcv1-sort-spinner[hidden] { display: none; }
     .dcv1-sort-badge {
       position: absolute;
-      top: -3px;
+      top: -4px;
       left: 50%;
-      max-width: 48px;
+      max-width: 40px;
       overflow: hidden;
       padding: 1px 4px;
       color: #fff;
@@ -1337,6 +1350,12 @@ export function setup(ctx) {
     }
     .dcv1-status:empty {
       display: none;
+    }
+    .dcv1-footer-status {
+      flex: 1 1 auto;
+      min-width: 0;
+      grid-column: auto;
+      font-size: 10.5px;
     }
     .dcv1-scroll {
       flex: 1 1 auto;
@@ -2805,17 +2824,6 @@ export function setup(ctx) {
       font-size: 13px;
     }
     /* ---- Catalogue controls, densities and skeletons ---- */
-    .dcv1-catalog-bar {
-      flex: 0 0 auto;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 9px 7px;
-      border-bottom: 1px solid rgba(255,255,255,.07);
-      background: var(--dc-panel);
-    }
-    .dcv1-catalog-bar[hidden] { display: none; }
     .dcv1-density {
       display: inline-flex;
       padding: 2px;
@@ -2824,48 +2832,73 @@ export function setup(ctx) {
       background: rgba(255,255,255,.04);
     }
     .dcv1-density button {
-      padding: 4px 11px;
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      padding: 0;
       border: 0;
       border-radius: 999px;
       background: transparent;
       color: var(--dc-muted);
-      font: inherit;
-      font-size: 11px;
-      font-weight: 700;
       cursor: pointer;
     }
+    .dcv1-density button svg { width: 16px; height: 16px; }
     .dcv1-density button[aria-pressed="true"] {
       background: var(--dc-accent);
       color: #ffffff;
     }
     .dcv1-bar-count {
-      flex: 1 1 0;
-      min-width: 48px;
+      grid-column: 1 / -1;
+      min-width: 0;
       color: var(--dc-muted);
       font-size: 11px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .dcv1-filter-toggle { padding: 4px 12px; min-height: 28px; font-size: 12px; }
+    .dcv1-bar-count:empty { display: none; }
+    .dcv1-filter-toggle {
+      position: relative;
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      color: var(--dc-muted);
+      border: 1px solid var(--dc-border);
+      border-radius: 9px;
+      background: var(--dc-panel-2);
+      cursor: pointer;
+    }
+    .dcv1-filter-toggle svg { width: 18px; height: 18px; }
+    .dcv1-filter-toggle:hover,
+    .dcv1-filter-toggle[aria-expanded="true"] { color: var(--dc-accent); border-color: rgba(255, 45, 154, .55); }
     .dcv1-filter-toggle[data-active="true"] { border-color: var(--dc-accent); color: var(--dc-accent); }
     .dcv1-filter-toggle span {
-      margin-left: 6px;
-      padding: 0 6px;
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      min-width: 15px;
+      padding: 1px 4px;
       border-radius: 999px;
       background: var(--dc-accent);
       color: #ffffff;
-      font-size: 10px;
+      font-size: 9px;
       font-weight: 800;
+      line-height: 1.2;
+      text-align: center;
     }
+    .dcv1-filter-toggle span[hidden] { display: none; }
     .dcv1-filter-panel {
-      flex: 1 1 100%;
+      grid-column: 1 / -1;
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
       padding-top: 6px;
     }
     .dcv1-filter-panel[hidden] { display: none; }
+    .dcv1-filter-panel { max-height: 55vh; overflow-y: auto; overscroll-behavior: contain; }
     .dcv1-filter-panel label {
       display: grid;
       gap: 3px;
@@ -2899,7 +2932,6 @@ export function setup(ctx) {
       font-size: 12px !important;
     }
     .dcv1-filter-panel .dcv1-button { grid-column: 1 / -1; justify-self: start; min-height: 30px; }
-    .dcv1-card { content-visibility: auto; contain-intrinsic-size: auto 300px; }
     .dcv1-card-meta {
       display: flex;
       gap: 4px;
@@ -3253,7 +3285,6 @@ export function setup(ctx) {
       display: none;
     }
     @media (max-width: 720px) {
-      .dcv1-search-row { grid-template-columns: minmax(0, 1fr) 42px; }
       .dcv1-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 7px; }
       .dcv1-fresh-row {
         grid-template-columns: 84px minmax(0, 1fr) 56px;
@@ -3410,24 +3441,17 @@ export function setup(ctx) {
   const root = document.createElement("section");
   root.className = "dcv1-root";
   root.innerHTML = `
-    <header class="dcv1-toolbar">
-      <div class="dcv1-toolbar-copy">
-        <span class="dcv1-toolbar-brand">Datacat Browser</span>
-        <span class="dcv1-version-badge">v${DISPLAY_VERSION}</span>
-      </div>
-      <button class="dcv1-button dcv1-toolbar-icon dcv1-toolbar-bare" type="button" data-refresh aria-label="Refresh Datacat" title="Refresh Datacat">${REFRESH_ICON}</button>
-      <button class="dcv1-button dcv1-toolbar-close dcv1-toolbar-bare" type="button" data-close-drawer aria-label="Close Datacat">×</button>
-      <div class="dcv1-status" data-status>Connecting…</div>
-    </header>
     <nav class="dcv1-view-tabs" aria-label="Datacat browser view">
       <button class="dcv1-view-tab" type="button" data-view-mode="fresh" data-active="true">Fresh</button>
       <button class="dcv1-view-tab" type="button" data-view-mode="catalog" data-active="false">Catalog</button>
       <button class="dcv1-view-tab" type="button" data-view-mode="imports" data-active="false">Imports</button>
       <button class="dcv1-button dcv1-tag-toggle" type="button" data-tags-toggle aria-expanded="false">Tags</button>
+      <button class="dcv1-button dcv1-toolbar-icon dcv1-toolbar-bare" type="button" data-refresh aria-label="Refresh Datacat" title="Refresh Datacat · v${DISPLAY_VERSION}">${REFRESH_ICON}</button>
+      <button class="dcv1-button dcv1-toolbar-close dcv1-toolbar-bare" type="button" data-close-drawer aria-label="Close Datacat">×</button>
     </nav>
-    <div class="dcv1-search-row" data-search-row>
+    <div class="dcv1-search-row" data-search-row data-catalog-bar hidden>
       <div class="dcv1-search-shell">
-        <input class="dcv1-search" type="search" placeholder="Search characters, creators, or tags" autocomplete="off" data-search>
+        <input class="dcv1-search" type="search" placeholder="Search characters or tags" autocomplete="off" data-search>
         <button class="dcv1-search-clear" type="button" data-clear hidden aria-label="Clear search" title="Clear search">×</button>
       </div>
       <div class="dcv1-catalog-sort" data-catalog-sort>
@@ -3440,21 +3464,13 @@ export function setup(ctx) {
           ${CATALOG_SORT_OPTIONS.map((option) => `<button class="dcv1-sort-option" type="button" data-sort-option="${escapeAttribute(option.value)}" role="menuitemradio">${escapeHtml(option.label)}</button>`).join("")}
         </div>
       </div>
-    </div>
-    <div class="dcv1-catalog-bar" data-catalog-bar hidden>
       <div class="dcv1-density" role="group" aria-label="Card size">
-        ${[
-          ["comfy", "Large"],
-          ["compact", "Compact"],
-        ]
-          .map(
-            ([value, label]) => `<button type="button" data-density="${value}" aria-pressed="false">${label}</button>`,
-          )
-          .join("")}
+        <button type="button" data-density="comfy" aria-pressed="false" aria-label="Large cards" title="Large cards">${DENSITY_LARGE_ICON}</button>
+        <button type="button" data-density="compact" aria-pressed="false" aria-label="Compact cards" title="Compact cards">${DENSITY_COMPACT_ICON}</button>
       </div>
-      <span class="dcv1-bar-count" data-bar-count></span>
-      <button class="dcv1-button dcv1-filter-toggle" type="button" data-filters-toggle aria-expanded="false">Filters<span data-filter-badge hidden></span></button>
+      <button class="dcv1-filter-toggle" type="button" data-filters-toggle aria-expanded="false" aria-label="Filters" title="Filters">${FILTER_ICON}<span data-filter-badge hidden></span></button>
       <div class="dcv1-filter-panel" data-filter-panel hidden>
+        <div class="dcv1-bar-count" data-bar-count></div>
         <label>Rating
           <select data-filter="minScore">
             <option value="0">Any</option><option value="50">50%+</option><option value="70">70%+</option><option value="90">90%+</option>
@@ -3503,6 +3519,7 @@ export function setup(ctx) {
       <button class="dcv1-infinite-sentinel" type="button" data-catalog-sentinel hidden></button>
     </div>
     <footer class="dcv1-account-footer">
+      <div class="dcv1-status dcv1-footer-status" data-status>Connecting…</div>
       <span class="dcv1-account-summary" data-account-summary aria-busy="true"><span data-account-summary-label>Checking account…</span><span class="dcv1-inline-spinner" data-account-summary-spinner aria-hidden="true"></span></span>
       <div class="dcv1-menu dcv1-account-menu">
         <button class="dcv1-account-change" type="button" data-menu-toggle aria-label="Manage Datacat account" title="Manage Datacat account" aria-haspopup="menu" aria-expanded="false">${ACCOUNT_ICON}</button>
@@ -3521,9 +3538,11 @@ export function setup(ctx) {
 
   const grid = root.querySelector("[data-grid]");
   const searchRow = root.querySelector("[data-search-row]");
-  const catalogBar = root.querySelector("[data-catalog-bar]");
+  const catalogBar = searchRow;
   const filterPanel = root.querySelector("[data-filter-panel]");
   const gridNodes = new Map();
+  const freshNodes = new Map();
+  const viewScroll = { fresh: 0, catalog: 0, imports: 0 };
   const viewModeButtons = [
     ...root.querySelectorAll("[data-view-mode]"),
   ];
@@ -3736,6 +3755,12 @@ export function setup(ctx) {
       browserStateSaveTimer = 0;
       persistBrowserStateNow();
     }, 80);
+  }
+
+  function scrollCatalogToTop() {
+    pendingCatalogScrollTop = null;
+    viewScroll[state.viewMode] = 0;
+    catalogScroll.scrollTop = 0;
   }
 
   function restorePersistedScroll() {
@@ -5359,20 +5384,6 @@ export function setup(ctx) {
       </article>`;
   }
 
-  function renderFreshWindow(title, detail, characters) {
-    if (!characters.length) return "";
-    return `
-      <section class="dcv1-fresh-section">
-        <header class="dcv1-fresh-head">
-          <strong>${escapeHtml(title)}</strong>
-          <span>${escapeHtml(detail)}</span>
-        </header>
-        <div class="dcv1-fresh-list">
-          ${characters.map(renderFreshRow).join("")}
-        </div>
-      </section>`;
-  }
-
   // ---- Catalogue grid: filters, density, and in-place card updates ----
   function persistCatalogPrefs() {
     saveCatalogPrefs({ density: state.density, filters: state.filters });
@@ -5398,9 +5409,13 @@ export function setup(ctx) {
       : state.characters;
   }
 
+  let lastGridHtml = "";
   function setGridHtml(html) {
+    if (grid.dataset.mode === "html" && html === lastGridHtml) return;
     gridNodes.clear();
+    freshNodes.clear();
     grid.dataset.mode = "html";
+    lastGridHtml = html;
     grid.innerHTML = html;
   }
 
@@ -5412,43 +5427,94 @@ export function setup(ctx) {
       .join("");
   }
 
-  // Keep existing card nodes (and their decoded images) when only the list
-  // grows, instead of rebuilding the whole grid on every render.
-  function reconcileCards(items, withSkeleton) {
-    if (grid.dataset.mode !== "cards") {
-      grid.replaceChildren();
-      gridNodes.clear();
-      grid.dataset.mode = "cards";
-    }
-    for (const node of [...grid.children]) {
-      if (!node.classList.contains("dcv1-card")) node.remove();
-    }
+  // Keyed in-place list sync: existing nodes (and their decoded images, hover
+  // and focus state) survive; only new or changed items touch the DOM.
+  function syncKeyedChildren(container, items, store, renderHtml) {
     const template = document.createElement("template");
     const keep = new Set();
     let previous = null;
-    for (const character of items) {
-      const id = normalizeId(character.id);
-      const html = renderCard(character).trim();
-      let entry = gridNodes.get(id);
+    for (const item of items) {
+      const id = normalizeId(item.id);
+      const html = renderHtml(item).trim();
+      let entry = store.get(id);
       if (!entry || entry.html !== html) {
         template.innerHTML = html;
         const element = template.content.firstElementChild;
         if (entry?.element?.isConnected) entry.element.replaceWith(element);
         entry = { html, element };
-        gridNodes.set(id, entry);
+        store.set(id, entry);
       }
       keep.add(id);
+      const expected = previous ? previous.nextElementSibling : container.firstElementChild;
+      if (entry.element !== expected) container.insertBefore(entry.element, expected);
+      previous = entry.element;
+    }
+    for (const [id, entry] of store) {
+      if (!keep.has(id)) {
+        entry.element.remove();
+        store.delete(id);
+      }
+    }
+  }
+
+  function reconcileCards(items, withSkeleton) {
+    if (grid.dataset.mode !== "cards") {
+      grid.replaceChildren();
+      gridNodes.clear();
+      freshNodes.clear();
+      grid.dataset.mode = "cards";
+      lastGridHtml = "";
+    }
+    for (const node of [...grid.children]) {
+      if (!node.classList.contains("dcv1-card")) node.remove();
+    }
+    syncKeyedChildren(grid, items, gridNodes, renderCard);
+    if (withSkeleton) grid.insertAdjacentHTML("beforeend", skeletonCards());
+  }
+
+  // The Fresh tab: two sections whose rows are synced in place.
+  function reconcileFresh(sections) {
+    if (grid.dataset.mode !== "fresh") {
+      grid.replaceChildren();
+      gridNodes.clear();
+      freshNodes.clear();
+      grid.dataset.mode = "fresh";
+      lastGridHtml = "";
+    }
+    const wanted = new Set();
+    let previous = null;
+    for (const section of sections) {
+      if (!section.items.length) continue;
+      wanted.add(section.key);
+      let entry = freshNodes.get(section.key);
+      if (!entry) {
+        const element = document.createElement("section");
+        element.className = "dcv1-fresh-section";
+        element.dataset.freshSection = section.key;
+        element.innerHTML =
+          '<header class="dcv1-fresh-head"><strong></strong><span></span></header><div class="dcv1-fresh-list"></div>';
+        entry = {
+          element,
+          title: element.querySelector("strong"),
+          detail: element.querySelector("span"),
+          list: element.querySelector(".dcv1-fresh-list"),
+          rows: new Map(),
+        };
+        freshNodes.set(section.key, entry);
+      }
+      if (entry.title.textContent !== section.title) entry.title.textContent = section.title;
+      if (entry.detail.textContent !== section.detail) entry.detail.textContent = section.detail;
+      syncKeyedChildren(entry.list, section.items, entry.rows, renderFreshRow);
       const expected = previous ? previous.nextElementSibling : grid.firstElementChild;
       if (entry.element !== expected) grid.insertBefore(entry.element, expected);
       previous = entry.element;
     }
-    for (const [id, entry] of gridNodes) {
-      if (!keep.has(id)) {
+    for (const [key, entry] of freshNodes) {
+      if (!wanted.has(key)) {
         entry.element.remove();
-        gridNodes.delete(id);
+        freshNodes.delete(key);
       }
     }
-    if (withSkeleton) grid.insertAdjacentHTML("beforeend", skeletonCards());
   }
 
   function syncCatalogBar() {
@@ -5565,18 +5631,20 @@ export function setup(ctx) {
       } else if (freshCount === 0) {
         setGridHtml(`<div class="dcv1-empty">No newly discovered characters are available.</div>`);
       } else {
-        setGridHtml([
-          renderFreshWindow(
-            "New in the last 24 hours",
-            `${state.freshWindows.last24h.length} loaded`,
-            state.freshWindows.last24h,
-          ),
-          renderFreshWindow(
-            "Discovered this week",
-            `${state.freshWindows.thisWeek.length} loaded`,
-            state.freshWindows.thisWeek,
-          ),
-        ].join(""));
+        reconcileFresh([
+          {
+            key: "last24h",
+            title: "New in the last 24 hours",
+            detail: `${state.freshWindows.last24h.length} loaded`,
+            items: state.freshWindows.last24h,
+          },
+          {
+            key: "thisWeek",
+            title: "Discovered this week",
+            detail: `${state.freshWindows.thisWeek.length} loaded`,
+            items: state.freshWindows.thisWeek,
+          },
+        ]);
       }
     } else if (isImports) {
       setGridHtml(renderImports());
@@ -5906,6 +5974,7 @@ export function setup(ctx) {
     state.selectedCreatorRef = "";
     state.creatorCharacters = [];
     renderProfile();
+    scrollCatalogToTop();
     await Promise.all([
       loadTags({ reset: true }),
       loadCharacters({ reset: true, preserveExisting: true }),
@@ -5966,7 +6035,6 @@ export function setup(ctx) {
     if (reset) {
       state.loading = true;
       state.hasMore = false;
-      catalogScroll.scrollTop = 0;
     } else {
       state.loadingMore = true;
     }
@@ -6157,7 +6225,6 @@ export function setup(ctx) {
         last24h: { nextOffset: 0, hasMore: false },
         thisWeek: { nextOffset: 0, hasMore: false },
       };
-      catalogScroll.scrollTop = 0;
     } else {
       state.freshLoadingMore = true;
     }
@@ -7396,10 +7463,10 @@ export function setup(ctx) {
       searchClear.hidden = !state.query;
       scheduleBrowserStateSave();
       window.clearTimeout(searchTimer);
-      searchTimer = window.setTimeout(
-        () => loadCharacters({ reset: true }),
-        300,
-      );
+      searchTimer = window.setTimeout(() => {
+        scrollCatalogToTop();
+        return loadCharacters({ reset: true });
+      }, 300);
       return;
     }
     if (event.target === tagSearch) {
@@ -7489,7 +7556,7 @@ export function setup(ctx) {
       state.catalogSortLoading = true;
       syncCatalogSortControl();
       scheduleBrowserStateSave();
-      catalogScroll.scrollTop = 0;
+      scrollCatalogToTop();
       void loadCharacters({ reset: true }).finally(() => {
         state.catalogSortLoading = false;
         render();
@@ -7507,11 +7574,13 @@ export function setup(ctx) {
         ? requestedMode
         : "fresh";
       if (nextMode === state.viewMode) return;
+      viewScroll[state.viewMode] = catalogScroll.scrollTop;
+      pendingCatalogScrollTop = null;
       state.viewMode = nextMode;
       state.tagPanelOpen = false;
       setCatalogSortOpen(false);
-      catalogScroll.scrollTop = 0;
       render();
+      catalogScroll.scrollTop = viewScroll[nextMode] || 0;
       if (
         nextMode === "fresh" &&
         freshCharacterCount() === 0 &&
@@ -7566,9 +7635,11 @@ export function setup(ctx) {
     }
     if (target.closest("[data-tags-toggle]")) {
       if (state.viewMode !== "catalog") {
+        viewScroll[state.viewMode] = catalogScroll.scrollTop;
+        pendingCatalogScrollTop = null;
         state.viewMode = "catalog";
-        catalogScroll.scrollTop = 0;
         render();
+        catalogScroll.scrollTop = viewScroll.catalog || 0;
         if (state.characters.length === 0 && !state.loading) {
           void loadCharacters({ reset: true });
         }
@@ -7810,6 +7881,7 @@ export function setup(ctx) {
       return;
     }
     if (target.closest("[data-refresh]")) {
+      scrollCatalogToTop();
       void refreshCatalog({ forceLibrary: true });
       return;
     }
@@ -7818,6 +7890,7 @@ export function setup(ctx) {
       state.query = "";
       searchClear.hidden = true;
       scheduleBrowserStateSave();
+      scrollCatalogToTop();
       void loadCharacters({ reset: true });
       return;
     }
@@ -7901,6 +7974,16 @@ export function setup(ctx) {
   catalogScroll.addEventListener("scroll", scheduleBrowserStateSave, {
     passive: true,
   });
+  // Once the person scrolls themselves, a saved position must never fight them.
+  for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+    catalogScroll.addEventListener(
+      type,
+      () => {
+        pendingCatalogScrollTop = null;
+      },
+      { passive: true },
+    );
+  }
 
   let raf = 0;
   let attempts = 0;
