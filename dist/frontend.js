@@ -6078,6 +6078,7 @@ function setup(ctx) {
     }
   }
   async function refreshCatalog({ forceLibrary = false } = {}) {
+    prepareVerification();
     datacatFetch("/capabilities").then((payload) => console.info("[Datacat] capabilities:", payload)).catch(() => {});
     const loads = [
       loadAccountState({ force: true }),
@@ -6574,6 +6575,7 @@ function setup(ctx) {
     if (getVerificationLease() || !state.verificationDeclined) {
       loadCardPreview(normalizeId(id));
     }
+    prepareVerification();
     loadCharacterCommunity(id, { quiet: true });
     try {
       const profilePath = characterClientPath(summary || { id }, "profile");
@@ -6717,6 +6719,7 @@ function setup(ctx) {
     verificationPollTimer = 0;
     closeVerificationPopup(activeVerificationPopup);
     activeVerificationPopup = null;
+    window.setTimeout(prepareVerification, 300);
     const reject = verificationReject;
     verificationReject = null;
     if (reject) {
@@ -6725,6 +6728,45 @@ function setup(ctx) {
       reject(error);
     }
   }
+  let preparedVerification = null;
+  const preparedByPopup = new WeakMap;
+  function prepareVerification() {
+    if (getVerificationLease() || verificationPromise)
+      return;
+    const current = preparedVerification;
+    if (current && (!current.expiresAt || current.expiresAt - Date.now() > 60000))
+      return;
+    const entry = { url: "", payload: null, expiresAt: 0 };
+    preparedVerification = entry;
+    datacatFetch("/verifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: VERIFICATION_ACTION,
+        clientName: "Lumiverse",
+        clientVersion: VERSION
+      })
+    }).then((payload) => {
+      entry.url = normalizeVerificationUrl(payload.verificationUriComplete) || "";
+      entry.payload = payload;
+      entry.expiresAt = Date.now() + Number(payload.expiresIn || 300) * 1000;
+      if (!entry.url && preparedVerification === entry)
+        preparedVerification = null;
+    }).catch(() => {
+      if (preparedVerification === entry)
+        preparedVerification = null;
+    });
+  }
+  function openVerificationWindow() {
+    const entry = preparedVerification;
+    const usable = entry?.url && entry.expiresAt - Date.now() > 45000;
+    if (usable)
+      preparedVerification = null;
+    const popup = window.open(usable ? entry.url : verificationPopupWaitingUrl(), "datacat-client-verification", "popup=yes,width=560,height=720");
+    if (popup && usable)
+      preparedByPopup.set(popup, entry);
+    return popup;
+  }
   async function startImportVerification(requestedName, popup = null) {
     const generation = ++verificationGeneration;
     if (!popup || popup.closed) {
@@ -6732,7 +6774,9 @@ function setup(ctx) {
     }
     activeVerificationPopup = popup;
     try {
-      const payload = await datacatFetch("/verifications", {
+      const prepared = preparedByPopup.get(popup);
+      preparedByPopup.delete(popup);
+      const payload = prepared?.payload || await datacatFetch("/verifications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -6745,13 +6789,15 @@ function setup(ctx) {
       if (!verificationUrl) {
         throw new Error("Datacat returned an invalid security-check address.");
       }
-      try {
-        if (popup.closed)
+      if (!prepared) {
+        try {
+          if (popup.closed)
+            throw verificationPopupBlockedError();
+          popup.location.replace(verificationUrl);
+          popup.focus();
+        } catch (_) {
           throw verificationPopupBlockedError();
-        popup.location.replace(verificationUrl);
-        popup.focus();
-      } catch (_) {
-        throw verificationPopupBlockedError();
+        }
       }
       activeVerificationPopup = popup;
       setStatus("");
@@ -6959,7 +7005,7 @@ function setup(ctx) {
     const existingLease = getVerificationLease();
     if (!existingLease && state.cardLoading.size)
       return;
-    const popup = existingLease ? null : window.open(verificationPopupWaitingUrl(), "datacat-client-verification", "popup=yes,width=560,height=720");
+    const popup = existingLease ? null : openVerificationWindow();
     state.cardErrors.delete(id);
     if (!existingLease && !popup) {
       state.verificationDeclined = true;
@@ -7011,7 +7057,7 @@ function setup(ctx) {
     const requestedName = summary?.name || "character";
     let lumiverseCharacter = null;
     const existingLease = getVerificationLease();
-    const verificationPopup = existingLease ? null : window.open(verificationPopupWaitingUrl(), "datacat-client-verification", "popup=yes,width=560,height=720");
+    const verificationPopup = existingLease ? null : openVerificationWindow();
     if (!existingLease && !verificationPopup) {
       const error = verificationPopupBlockedError();
       const message = publicErrorMessage(error, "Allow pop-ups for Lumiverse to complete the Datacat security check.");
