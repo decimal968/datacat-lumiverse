@@ -13,7 +13,7 @@ import {
 } from "./richtext.js";
 
 const VERSION = "0.5.48";
-const DISPLAY_VERSION = "0.1";
+const DISPLAY_VERSION = VERSION;
 const PAGE_SIZE = 24;
 const CHAT_LOADING_MIN_MS = 750;
 const MAX_MIRRORED_AVATAR_BYTES = 50 * 1024 * 1024;
@@ -399,11 +399,10 @@ function advertisedImageUrl(character) {
   ) {
     return "";
   }
+  const raw = String(character?.image?.url || character?.avatarUrl || "").trim();
+  if (!raw) return "";
   try {
-    const url = new URL(
-      String(character?.image?.url || character?.avatarUrl || "").trim(),
-      apiOrigin(),
-    );
+    const url = new URL(raw, apiOrigin());
     return url.protocol === "https:" || url.protocol === "http:"
       ? url.href
       : "";
@@ -414,8 +413,10 @@ function advertisedImageUrl(character) {
 
 function characterClientPath(character, action) {
   const characterId = normalizeId(character?.id);
+  // Accept any UUID version: the Datacat backend pattern is version-agnostic
+  // and the extension itself generates UUIDv7 elsewhere.
   if (
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
       characterId,
     )
   ) {
@@ -3451,7 +3452,7 @@ export function setup(ctx) {
     </nav>
     <div class="dcv1-search-row" data-search-row data-catalog-bar hidden>
       <div class="dcv1-search-shell">
-        <input class="dcv1-search" type="search" placeholder="Search characters or tags" autocomplete="off" data-search>
+        <input class="dcv1-search" type="search" placeholder="Search characters or tags" autocomplete="off" data-search aria-label="Search characters or tags">
         <button class="dcv1-search-clear" type="button" data-clear hidden aria-label="Clear search" title="Clear search">×</button>
       </div>
       <div class="dcv1-catalog-sort" data-catalog-sort>
@@ -3502,7 +3503,7 @@ export function setup(ctx) {
         <button class="dcv1-button" type="button" data-tags-close>Close</button>
       </header>
       <div class="dcv1-tag-tools">
-        <input class="dcv1-search" type="search" placeholder="Find tags" autocomplete="off" data-tag-search>
+        <input class="dcv1-search" type="search" placeholder="Find tags" autocomplete="off" data-tag-search aria-label="Find tags">
         <button class="dcv1-button" type="button" data-tag-sort>Most used</button>
         <div class="dcv1-tag-view-toggle" role="group" aria-label="Tag view">
           <button type="button" data-tag-view="list">List</button>
@@ -3637,6 +3638,7 @@ export function setup(ctx) {
     freshError: "",
     freshLoadMoreError: "",
     freshSerial: 0,
+    freshRerunPending: false,
     community: null,
     communityCharacterId: "",
     communityLoading: false,
@@ -3687,11 +3689,15 @@ export function setup(ctx) {
     tagLoadingMore: false,
     tagError: "",
     tagSerial: 0,
+    tagRerunPending: false,
     importId: "",
+    partialImports: new Map(),
     chatOpeningId: "",
     importFeedback: null,
     linkedAccount: null,
     accountState: "loading",
+    accountUnavailable: false,
+    accountUnavailableMessage: "",
     accountLinking: false,
     accountChoiceOpen: false,
     savedCharacters: new Map(),
@@ -3701,6 +3707,7 @@ export function setup(ctx) {
     savedError: "",
     savedLoadedAt: 0,
     serial: 0,
+    catalogRerunPending: null,
   };
   let searchTimer = 0;
   let tagSearchTimer = 0;
@@ -4320,7 +4327,7 @@ export function setup(ctx) {
     return `
       <article class="dcv1-import-row">
         <div class="dcv1-import-row-avatar">
-          <img src="${escapeAttribute(localCharacterAvatarUrl({ id: lumiverseCharacterId }))}" alt="" loading="lazy">
+          <img src="${escapeAttribute(localCharacterAvatarUrl({ id: lumiverseCharacterId }))}" alt="" loading="lazy" referrerpolicy="no-referrer">
         </div>
         <div class="dcv1-import-row-copy">
           <div class="dcv1-import-row-title" title="${escapeAttribute(name)}">${escapeHtml(name)}</div>
@@ -4441,7 +4448,7 @@ export function setup(ctx) {
           <section class="dcv1-local-hero">
             <div class="dcv1-local-avatar-fallback" aria-hidden="true">${escapeHtml(name.slice(0, 1).toUpperCase())}</div>
             ${avatarUrl
-              ? `<img src="${escapeAttribute(avatarUrl)}" alt="${escapeAttribute(name)}">`
+              ? `<img src="${escapeAttribute(avatarUrl)}" alt="${escapeAttribute(name)}" referrerpolicy="no-referrer">`
               : ""}
             <div class="dcv1-local-hero-copy">
               <h3>${escapeHtml(name)}</h3>
@@ -4765,7 +4772,7 @@ export function setup(ctx) {
       <article class="dcv1-card" tabindex="0" data-card="${escapeAttribute(id)}" data-added="${isSaved}">
         <div class="dcv1-cover-wrap">
           ${avatarUrl
-            ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" loading="lazy">`
+            ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
             : `<div class="dcv1-cover-missing">${CAT_ICON}<span>Image pending</span></div>`}
           ${isSaved ? '<span class="dcv1-added-badge">Added</span>' : ""}
           ${publishedBadge
@@ -5083,7 +5090,7 @@ export function setup(ctx) {
           <div class="dcv1-character-modal-body">
             <div class="dcv1-character-hero">
               ${avatarUrl
-                ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="">`
+                ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" referrerpolicy="no-referrer">`
                 : `<div class="dcv1-cover-missing">${CAT_ICON}<span>Image pending</span></div>`}
               <div class="dcv1-score-badge" data-tier="${escapeAttribute(score.tier)}" title="Datacat score">
                 <strong>${escapeHtml(score.label)}</strong>
@@ -5240,7 +5247,7 @@ export function setup(ctx) {
                 </div>
                 <div class="dcv1-creator-media">
                   ${creatorAvatar
-                    ? `<img class="dcv1-profile-avatar" src="${escapeAttribute(creatorAvatar)}" alt="">`
+                    ? `<img class="dcv1-profile-avatar" src="${escapeAttribute(creatorAvatar)}" alt="" referrerpolicy="no-referrer">`
                     : `<div class="dcv1-profile-avatar dcv1-cover-missing">${CAT_ICON}</div>`}
                 </div>
                 <div class="dcv1-creator-tag-panel">
@@ -5342,7 +5349,7 @@ export function setup(ctx) {
         <div class="dcv1-fresh-title" title="${escapeAttribute(character.name)}">${escapeHtml(character.name || "Untitled")}</div>
         <div class="dcv1-fresh-cover">
           ${avatarUrl
-            ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" loading="lazy">`
+            ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
             : `<div class="dcv1-cover-missing">${CAT_ICON}<span>Image pending</span></div>`}
           ${publishedBadge
             ? `<time class="dcv1-fresh-date" datetime="${escapeAttribute(publishedValue)}" title="${escapeAttribute(readableDate(publishedValue))}">${escapeHtml(publishedBadge)}</time>`
@@ -5910,7 +5917,10 @@ export function setup(ctx) {
   }
 
   async function loadTags({ reset = false } = {}) {
-    if (state.tagLoading || state.tagLoadingMore) return;
+    if (state.tagLoading || state.tagLoadingMore) {
+      state.tagRerunPending = reset;
+      return;
+    }
     const serial = ++state.tagSerial;
     state.tagError = "";
     if (reset) {
@@ -5959,6 +5969,11 @@ export function setup(ctx) {
       state.tagLoading = false;
       state.tagLoadingMore = false;
       renderTagBrowser();
+      const tagRerun = state.tagRerunPending;
+      if (tagRerun) {
+        state.tagRerunPending = false;
+        void loadTags({ reset: tagRerun });
+      }
     }
   }
 
@@ -6028,7 +6043,14 @@ export function setup(ctx) {
     reset = false,
     preserveExisting = false,
   } = {}) {
-    if (state.loading || state.loadingMore) return;
+    // If a request is already in flight, remember that a newer request is
+    // wanted and let the in-flight one finish; its finally block re-runs with
+    // the latest query. This prevents a stale response from populating the
+    // grid while the user has already typed a newer search.
+    if (state.loading || state.loadingMore) {
+      state.catalogRerunPending = { reset, preserveExisting };
+      return;
+    }
     const serial = ++state.serial;
     state.error = "";
     state.loadMoreError = "";
@@ -6096,6 +6118,13 @@ export function setup(ctx) {
       state.loading = false;
       state.loadingMore = false;
       render();
+      // A newer search/sort arrived while this request was in flight: run it
+      // now so the grid reflects the latest input instead of the stale result.
+      const rerun = state.catalogRerunPending;
+      if (rerun) {
+        state.catalogRerunPending = null;
+        void loadCharacters(rerun);
+      }
     }
   }
 
@@ -6214,7 +6243,10 @@ export function setup(ctx) {
   }
 
   async function loadFreshCharacters({ reset = false } = {}) {
-    if (state.freshLoading || state.freshLoadingMore) return;
+    if (state.freshLoading || state.freshLoadingMore) {
+      state.freshRerunPending = reset;
+      return;
+    }
     const serial = ++state.freshSerial;
     state.freshError = "";
     state.freshLoadMoreError = "";
@@ -6299,6 +6331,11 @@ export function setup(ctx) {
       state.freshLoading = false;
       state.freshLoadingMore = false;
       render();
+      const freshRerun = state.freshRerunPending;
+      if (freshRerun) {
+        state.freshRerunPending = false;
+        void loadFreshCharacters({ reset: freshRerun });
+      }
     }
   }
 
@@ -7156,16 +7193,8 @@ export function setup(ctx) {
           },
         };
       }
-      const avatarFile = await withImportVerification(
-        requestedName,
-        verificationPopup,
-        () => downloadMirroredAvatar(
-          transfer.character,
-          transfer.avatarPath,
-        ),
-      );
-      closeVerificationPopup(verificationPopup);
 
+      // Stage 1: create the local character record.
       const importResponse = await fetch("/api/v1/characters/import", {
         method: "POST",
         credentials: "include",
@@ -7183,19 +7212,35 @@ export function setup(ctx) {
       state.savedCharacters.set(id, lumiverseCharacter.id);
       state.savedLoaded = true;
 
-      const avatarForm = new FormData();
-      avatarForm.append("avatar", avatarFile);
-      const avatarResponse = await fetch(
-        `/api/v1/characters/${encodeURIComponent(lumiverseCharacter.id)}/avatar`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: { Accept: "application/json" },
-          body: avatarForm,
-        },
-      );
-      const avatarCharacter = await readJson(avatarResponse);
-      if (avatarCharacter?.id) lumiverseCharacter = avatarCharacter;
+      // Stage 2: upload the avatar. If this fails, the character exists but
+      // has no image. Record partial state so a retry resumes from the avatar
+      // step instead of re-creating the character.
+      try {
+        const avatarFile = await withImportVerification(
+          requestedName,
+          verificationPopup,
+          () =>
+            downloadMirroredAvatar(
+              transfer.character,
+              transfer.avatarPath,
+            ),
+        );
+        await uploadCharacterAvatar(lumiverseCharacter.id, avatarFile);
+        const avatarCharacter = await refreshCharacterAvatar(
+          lumiverseCharacter.id,
+        );
+        if (avatarCharacter?.id) lumiverseCharacter = avatarCharacter;
+        clearPartialImport(id);
+      } catch (avatarError) {
+        // The character was created but the avatar failed. Persist partial
+        // state so retrying uploads only the image.
+        state.partialImports.set(id, {
+          lumiverseCharacterId: lumiverseCharacter.id,
+          name: lumiverseCharacter.name || requestedName,
+          importedAt,
+        });
+        throw avatarError;
+      }
 
       const name = lumiverseCharacter?.name || requestedName;
       upsertImportRecord({
@@ -7238,25 +7283,130 @@ export function setup(ctx) {
           ? `${publicErrorMessage(error, "Import failed.")} Retry in ${error.retryAfter}s.`
           : publicErrorMessage(error, "Import failed.");
       setStatus(message, true);
+      // If a partial import exists, the character was created but the avatar
+      // failed. The retry button resumes the avatar upload only.
+      const partial = state.partialImports.get(id);
       setImportFeedback({
         tone: "error",
         title: cancelled
           ? `Import of ${requestedName} cancelled`
+          : partial
+            ? `${partial.name} was added without its image`
+            : lumiverseCharacter?.id
+              ? `${lumiverseCharacter.name || requestedName} was added without its image`
+              : `Could not import ${requestedName}`,
+        detail: partial
+          ? `${message} The character exists in Lumiverse; retrying uploads only the missing image.`
           : lumiverseCharacter?.id
-          ? `${lumiverseCharacter.name || requestedName} was added without its image`
-          : `Could not import ${requestedName}`,
-        detail: lumiverseCharacter?.id
-          ? `${message} Open the character to review it; retrying the full import could create a duplicate.`
-          : message,
+            ? `${message} Open the character to review it; retrying the full import could create a duplicate.`
+            : message,
         retryLabel:
           error.code === "VERIFICATION_RETRY_REQUIRED"
             ? "Continue with security check"
-            : "",
-        datacatCharacterId: lumiverseCharacter?.id ? "" : id,
-        lumiverseCharacterId: lumiverseCharacter?.id || "",
+            : partial
+              ? "Upload image"
+              : "",
+        datacatCharacterId: partial || lumiverseCharacter?.id ? "" : id,
+        lumiverseCharacterId:
+          partial?.lumiverseCharacterId || lumiverseCharacter?.id || "",
       });
     } finally {
       closeVerificationPopup(verificationPopup);
+      state.importId = "";
+      render();
+    }
+  }
+
+  async function uploadCharacterAvatar(lumiverseCharacterId, avatarFile) {
+    const avatarForm = new FormData();
+    avatarForm.append("avatar", avatarFile);
+    const avatarResponse = await fetch(
+      `/api/v1/characters/${encodeURIComponent(lumiverseCharacterId)}/avatar`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+        body: avatarForm,
+      },
+    );
+    const avatarCharacter = await readJson(avatarResponse);
+    if (!avatarCharacter?.id) {
+      throw new Error("Lumiverse could not store the imported image.");
+    }
+    return avatarCharacter;
+  }
+
+  async function refreshCharacterAvatar(lumiverseCharacterId) {
+    // Re-read the character so the local record reflects the uploaded avatar.
+    try {
+      const response = await fetch(
+        `/api/v1/characters/${encodeURIComponent(lumiverseCharacterId)}`,
+        { credentials: "include", headers: { Accept: "application/json" } },
+      );
+      const payload = await response.json().catch(() => ({}));
+      return payload?.character || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function clearPartialImport(datacatCharacterId) {
+    state.partialImports.delete(normalizeId(datacatCharacterId));
+  }
+
+  // Retry a partial import: the character already exists, so only re-attempt
+  // the failed avatar upload. Returns true if it retried, false if nothing to do.
+  async function retryPartialImport(id) {
+    const partial = state.partialImports.get(normalizeId(id));
+    if (!partial) return false;
+    const lumiverseCharacterId = normalizeId(partial.lumiverseCharacterId);
+    if (!lumiverseCharacterId) {
+      clearPartialImport(id);
+      return false;
+    }
+    state.importId = id;
+    setStatus(`Uploading image for ${partial.name}…`);
+    setImportFeedback({
+      tone: "progress",
+      title: `Uploading image for ${partial.name}…`,
+      datacatCharacterId: id,
+    });
+    render();
+    try {
+      const summary = findCharacterById(id) || state.selected;
+      const transfer = await resolveImportTransferContract(
+        summary || { id },
+        id,
+      );
+      const avatarFile = await downloadMirroredAvatar(
+        transfer.character,
+        transfer.avatarPath,
+      );
+      await uploadCharacterAvatar(lumiverseCharacterId, avatarFile);
+      clearPartialImport(id);
+      setStatus("");
+      setImportFeedback({
+        tone: "success",
+        title: `${partial.name} image uploaded`,
+        datacatCharacterId: id,
+        lumiverseCharacterId,
+      });
+      return true;
+    } catch (error) {
+      const message = error.retryAfter
+        ? `${publicErrorMessage(error, "Could not upload the image.")} Retry in ${error.retryAfter}s.`
+        : publicErrorMessage(error, "Could not upload the image.");
+      setStatus(message, true);
+      setImportFeedback({
+        tone: "error",
+        title: `${partial.name} image upload failed`,
+        detail: message,
+        retryLabel: "Upload image",
+        datacatCharacterId: "",
+        lumiverseCharacterId,
+      });
+      return true;
+    } finally {
       state.importId = "";
       render();
     }
@@ -7282,9 +7432,20 @@ export function setup(ctx) {
             : payload.accountState === "linked_anonymous"
               ? "linked_anonymous"
               : "unlinked";
+        state.accountUnavailable = false;
       } catch (error) {
-        state.linkedAccount = null;
-        state.accountState = "unlinked";
+        // Distinguish a connection failure from a genuinely unlinked account
+        // so the UI can show "can't check" instead of a misleading "unlinked".
+        state.linkedAccount = state.linkedAccount ?? null;
+        state.accountState = "unavailable";
+        state.accountUnavailable = true;
+        state.accountUnavailableMessage =
+          error.retryAfter
+            ? `${publicErrorMessage(error, "Could not check the Datacat account.")} Retry in ${error.retryAfter}s.`
+            : publicErrorMessage(
+                error,
+                "Could not check the Datacat account.",
+              );
       } finally {
         accountLoadedAt = Date.now();
         render();
@@ -7314,22 +7475,41 @@ export function setup(ctx) {
     if (state.accountLinking) return;
     state.accountLinking = true;
     render();
-    await loadAccountState({ force: true });
-    if (
-      state.accountState !== "unlinked" &&
-      !requireAccount &&
-      !forceAnonymous
-    ) {
+    // Open the popup synchronously from this user gesture so browsers allow
+    // it. We then redirect it to the real Datacat URL once the async request
+    // returns, avoiding popup blocking from awaiting before window.open.
+    const popup = window.open(
+      verificationPopupWaitingUrl(),
+      "datacat-account-link",
+      "popup=yes,width=560,height=720",
+    );
+    if (!popup) {
+      // Popup blocked: tell the user exactly where to go manually.
+      const blocked = new Error(
+        "Allow pop-ups for Lumiverse to connect your Datacat account.",
+      );
+      blocked.code = "ACCOUNT_POPUP_BLOCKED";
       state.accountLinking = false;
       render();
-      return;
+      throw blocked;
     }
-    let popup = null;
     let cancelled = false;
     setStatus(
       "Connecting…",
     );
     try {
+      // Check current state first; if already linked, skip the link flow.
+      await loadAccountState({ force: true });
+      if (
+        state.accountState !== "unlinked" &&
+        !requireAccount &&
+        !forceAnonymous
+      ) {
+        if (!popup.closed) popup.close();
+        state.accountLinking = false;
+        render();
+        return;
+      }
       const payload = await datacatFetch("/account-links", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -7358,13 +7538,24 @@ export function setup(ctx) {
         anonymousUrl.searchParams.set("anonymous", "1");
         accountLinkUrl = anonymousUrl.href;
       }
-      popup = window.open(
-        accountLinkUrl,
-        "datacat-account-link",
-        "popup=yes,width=560,height=720",
-      );
-      if (!popup) {
-        throw new Error(`Open ${accountLinkUrl} to approve the link.`);
+      // Redirect the already-open popup to the real Datacat URL.
+      try {
+        if (popup.closed) {
+          const closed = new Error("Account linking cancelled.");
+          closed.code = "LINK_WINDOW_CLOSED";
+          throw closed;
+        }
+        popup.location.replace(accountLinkUrl);
+        popup.focus();
+      } catch (navError) {
+        if (navError.code !== "LINK_WINDOW_CLOSED") {
+          const blocked = new Error(
+            `Open ${accountLinkUrl} to approve the link.`,
+          );
+          blocked.code = "ACCOUNT_POPUP_BLOCKED";
+          throw blocked;
+        }
+        throw navError;
       }
       setStatus(
         requireAccount ? "Log in to continue…" : "Connecting…",
@@ -7392,7 +7583,7 @@ export function setup(ctx) {
               state.linkedAccount
                 ? "logged_in"
                 : "linked_anonymous";
-            popup.close();
+            if (!popup.closed) popup.close();
             resolve();
           } catch (error) {
             if (error.code !== "LINK_PENDING") {
@@ -7424,13 +7615,19 @@ export function setup(ctx) {
       const message =
         error.code === "CLIENT_API_SCHEMA_REQUIRED"
           ? "Datacat account linking is temporarily unavailable. Character imports still work without linking."
-          : cancelled
-            ? "Cancelled."
-            : publicErrorMessage(error, "Could not link Datacat account.");
+          : error.code === "ACCOUNT_POPUP_BLOCKED"
+            ? publicErrorMessage(
+                error,
+                "Allow pop-ups for Lumiverse to connect your Datacat account.",
+              )
+            : cancelled
+              ? "Cancelled."
+              : publicErrorMessage(error, "Could not link Datacat account.");
       setStatus(message, true);
     } finally {
       window.clearTimeout(linkPollTimer);
       linkPollTimer = 0;
+      if (!popup.closed) closeVerificationPopup(popup);
       state.accountLinking = false;
       render();
       if (cancelled) updateCatalogStatus();
@@ -7866,7 +8063,13 @@ export function setup(ctx) {
     if (retryImport) {
       const characterId = normalizeId(retryImport.getAttribute("data-retry-import"));
       setImportFeedback(null);
-      void importCharacter(characterId);
+      // If a partial import exists (character created, avatar failed), retry
+      // only the avatar upload instead of re-running the full import.
+      if (state.partialImports.has(characterId)) {
+        void retryPartialImport(characterId);
+      } else {
+        void importCharacter(characterId);
+      }
       return;
     }
     const importButton = target.closest("[data-import]");
@@ -8273,6 +8476,11 @@ export function setup(ctx) {
     window.clearTimeout(linkPollTimer);
     window.clearTimeout(verificationPollTimer);
     window.clearTimeout(browserStateSaveTimer);
+    // Cancel any in-flight verification so its timers, listeners and popup are
+    // cleaned up on unmount instead of leaking.
+    cancelImportVerification();
+    closeVerificationPopup(activeVerificationPopup);
+    activeVerificationPopup = null;
     persistBrowserStateNow();
     catalogObserver.disconnect();
     tagObserver.disconnect();

@@ -603,8 +603,9 @@ function renderInline(text, ctx) {
     const url = safeUrl(href, ctx.origin);
     if (!url)
       return "";
-    ctx.images.push({ url, alt: alt.trim() });
-    return hold(`<img class="dcv1-rich-img" src="${esc(url)}" alt="${alt}" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-lightbox-src="${esc(url)}">`);
+    const safeAlt = alt.replace(/\d+/g, "");
+    ctx.images.push({ url, alt: safeAlt.trim() });
+    return hold(`<img class="dcv1-rich-img" src="${esc(url)}" alt="${safeAlt}" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-lightbox-src="${esc(url)}">`);
   });
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, (_, label, href) => {
     const url = safeUrl(href, ctx.origin);
@@ -952,7 +953,7 @@ function cardTabs(card, { origin = "https://datacat.run", fallbackDescription = 
 
 // src/frontend.js
 var VERSION = "0.5.48";
-var DISPLAY_VERSION = "0.1";
+var DISPLAY_VERSION = VERSION;
 var PAGE_SIZE = 24;
 var CHAT_LOADING_MIN_MS = 750;
 var MAX_MIRRORED_AVATAR_BYTES = 50 * 1024 * 1024;
@@ -1257,8 +1258,11 @@ function advertisedImageUrl(character) {
   if (character?.image?.status && String(character.image.status).trim().toLowerCase() !== "ready") {
     return "";
   }
+  const raw = String(character?.image?.url || character?.avatarUrl || "").trim();
+  if (!raw)
+    return "";
   try {
-    const url = new URL(String(character?.image?.url || character?.avatarUrl || "").trim(), apiOrigin());
+    const url = new URL(raw, apiOrigin());
     return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
   } catch (_) {
     return "";
@@ -1266,7 +1270,7 @@ function advertisedImageUrl(character) {
 }
 function characterClientPath(character, action) {
   const characterId = normalizeId(character?.id);
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(characterId)) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(characterId)) {
     return "";
   }
   const expectedPrefix = `/characters/${characterId}`;
@@ -4267,7 +4271,7 @@ function setup(ctx) {
     </nav>
     <div class="dcv1-search-row" data-search-row data-catalog-bar hidden>
       <div class="dcv1-search-shell">
-        <input class="dcv1-search" type="search" placeholder="Search characters or tags" autocomplete="off" data-search>
+        <input class="dcv1-search" type="search" placeholder="Search characters or tags" autocomplete="off" data-search aria-label="Search characters or tags">
         <button class="dcv1-search-clear" type="button" data-clear hidden aria-label="Clear search" title="Clear search">×</button>
       </div>
       <div class="dcv1-catalog-sort" data-catalog-sort>
@@ -4318,7 +4322,7 @@ function setup(ctx) {
         <button class="dcv1-button" type="button" data-tags-close>Close</button>
       </header>
       <div class="dcv1-tag-tools">
-        <input class="dcv1-search" type="search" placeholder="Find tags" autocomplete="off" data-tag-search>
+        <input class="dcv1-search" type="search" placeholder="Find tags" autocomplete="off" data-tag-search aria-label="Find tags">
         <button class="dcv1-button" type="button" data-tag-sort>Most used</button>
         <div class="dcv1-tag-view-toggle" role="group" aria-label="Tag view">
           <button type="button" data-tag-view="list">List</button>
@@ -4432,6 +4436,7 @@ function setup(ctx) {
     freshError: "",
     freshLoadMoreError: "",
     freshSerial: 0,
+    freshRerunPending: false,
     community: null,
     communityCharacterId: "",
     communityLoading: false,
@@ -4473,11 +4478,15 @@ function setup(ctx) {
     tagLoadingMore: false,
     tagError: "",
     tagSerial: 0,
+    tagRerunPending: false,
     importId: "",
+    partialImports: new Map,
     chatOpeningId: "",
     importFeedback: null,
     linkedAccount: null,
     accountState: "loading",
+    accountUnavailable: false,
+    accountUnavailableMessage: "",
     accountLinking: false,
     accountChoiceOpen: false,
     savedCharacters: new Map,
@@ -4486,7 +4495,8 @@ function setup(ctx) {
     savedLoading: false,
     savedError: "",
     savedLoadedAt: 0,
-    serial: 0
+    serial: 0,
+    catalogRerunPending: null
   };
   let searchTimer = 0;
   let tagSearchTimer = 0;
@@ -4918,7 +4928,7 @@ function setup(ctx) {
     return `
       <article class="dcv1-import-row">
         <div class="dcv1-import-row-avatar">
-          <img src="${escapeAttribute(localCharacterAvatarUrl({ id: lumiverseCharacterId }))}" alt="" loading="lazy">
+          <img src="${escapeAttribute(localCharacterAvatarUrl({ id: lumiverseCharacterId }))}" alt="" loading="lazy" referrerpolicy="no-referrer">
         </div>
         <div class="dcv1-import-row-copy">
           <div class="dcv1-import-row-title" title="${escapeAttribute(name)}">${escapeHtml(name)}</div>
@@ -5020,7 +5030,7 @@ function setup(ctx) {
         <article class="dcv1-local-profile">
           <section class="dcv1-local-hero">
             <div class="dcv1-local-avatar-fallback" aria-hidden="true">${escapeHtml(name.slice(0, 1).toUpperCase())}</div>
-            ${avatarUrl ? `<img src="${escapeAttribute(avatarUrl)}" alt="${escapeAttribute(name)}">` : ""}
+            ${avatarUrl ? `<img src="${escapeAttribute(avatarUrl)}" alt="${escapeAttribute(name)}" referrerpolicy="no-referrer">` : ""}
             <div class="dcv1-local-hero-copy">
               <h3>${escapeHtml(name)}</h3>
               ${creator ? `<div class="dcv1-local-creator">By ${escapeHtml(creator)}</div>` : ""}
@@ -5315,7 +5325,7 @@ function setup(ctx) {
     return `
       <article class="dcv1-card" tabindex="0" data-card="${escapeAttribute(id)}" data-added="${isSaved}">
         <div class="dcv1-cover-wrap">
-          ${avatarUrl ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" loading="lazy">` : `<div class="dcv1-cover-missing">${CAT_ICON}<span>Image pending</span></div>`}
+          ${avatarUrl ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="dcv1-cover-missing">${CAT_ICON}<span>Image pending</span></div>`}
           ${isSaved ? '<span class="dcv1-added-badge">Added</span>' : ""}
           ${publishedBadge ? `<time class="dcv1-card-date" datetime="${escapeAttribute(publishedValue)}" title="${escapeAttribute(readableDate(publishedValue))}">${escapeHtml(publishedBadge)}</time>` : ""}
           ${stats.tokens ? `<span class="dcv1-card-token" title="Total tokens">${escapeHtml(stats.tokens)} tokens</span>` : ""}
@@ -5538,7 +5548,7 @@ function setup(ctx) {
           </header>
           <div class="dcv1-character-modal-body">
             <div class="dcv1-character-hero">
-              ${avatarUrl ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="">` : `<div class="dcv1-cover-missing">${CAT_ICON}<span>Image pending</span></div>`}
+              ${avatarUrl ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" referrerpolicy="no-referrer">` : `<div class="dcv1-cover-missing">${CAT_ICON}<span>Image pending</span></div>`}
               <div class="dcv1-score-badge" data-tier="${escapeAttribute(score.tier)}" title="Datacat score">
                 <strong>${escapeHtml(score.label)}</strong>
                 <span>${escapeHtml(score.detail)}</span>
@@ -5651,7 +5661,7 @@ function setup(ctx) {
                   ${handle ? `<div class="dcv1-creator-handle">@${escapeHtml(handle)}</div>` : ""}
                 </div>
                 <div class="dcv1-creator-media">
-                  ${creatorAvatar ? `<img class="dcv1-profile-avatar" src="${escapeAttribute(creatorAvatar)}" alt="">` : `<div class="dcv1-profile-avatar dcv1-cover-missing">${CAT_ICON}</div>`}
+                  ${creatorAvatar ? `<img class="dcv1-profile-avatar" src="${escapeAttribute(creatorAvatar)}" alt="" referrerpolicy="no-referrer">` : `<div class="dcv1-profile-avatar dcv1-cover-missing">${CAT_ICON}</div>`}
                 </div>
                 <div class="dcv1-creator-tag-panel">
                   <div class="dcv1-creator-tag-heading">Tags</div>
@@ -5711,7 +5721,7 @@ function setup(ctx) {
       <article class="dcv1-fresh-row" tabindex="0" data-card="${escapeAttribute(id)}" data-added="${isSaved}">
         <div class="dcv1-fresh-title" title="${escapeAttribute(character.name)}">${escapeHtml(character.name || "Untitled")}</div>
         <div class="dcv1-fresh-cover">
-          ${avatarUrl ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" loading="lazy">` : `<div class="dcv1-cover-missing">${CAT_ICON}<span>Image pending</span></div>`}
+          ${avatarUrl ? `<img class="dcv1-cover" src="${escapeAttribute(avatarUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="dcv1-cover-missing">${CAT_ICON}<span>Image pending</span></div>`}
           ${publishedBadge ? `<time class="dcv1-fresh-date" datetime="${escapeAttribute(publishedValue)}" title="${escapeAttribute(readableDate(publishedValue))}">${escapeHtml(publishedBadge)}</time>` : ""}
           ${stats.tokens ? `<span class="dcv1-fresh-token" title="Total tokens">${escapeHtml(stats.tokens)} tokens</span>` : ""}
         </div>
@@ -6173,8 +6183,10 @@ function setup(ctx) {
     await Promise.all(loads);
   }
   async function loadTags({ reset = false } = {}) {
-    if (state.tagLoading || state.tagLoadingMore)
+    if (state.tagLoading || state.tagLoadingMore) {
+      state.tagRerunPending = reset;
       return;
+    }
     const serial = ++state.tagSerial;
     state.tagError = "";
     if (reset) {
@@ -6214,6 +6226,11 @@ function setup(ctx) {
       state.tagLoading = false;
       state.tagLoadingMore = false;
       renderTagBrowser();
+      const tagRerun = state.tagRerunPending;
+      if (tagRerun) {
+        state.tagRerunPending = false;
+        loadTags({ reset: tagRerun });
+      }
     }
   }
   async function updateSelectedTags(nextIds) {
@@ -6270,8 +6287,10 @@ function setup(ctx) {
     reset = false,
     preserveExisting = false
   } = {}) {
-    if (state.loading || state.loadingMore)
+    if (state.loading || state.loadingMore) {
+      state.catalogRerunPending = { reset, preserveExisting };
       return;
+    }
     const serial = ++state.serial;
     state.error = "";
     state.loadMoreError = "";
@@ -6337,6 +6356,11 @@ function setup(ctx) {
       state.loading = false;
       state.loadingMore = false;
       render();
+      const rerun = state.catalogRerunPending;
+      if (rerun) {
+        state.catalogRerunPending = null;
+        loadCharacters(rerun);
+      }
     }
   }
   function catalogUsesFreshFeed() {
@@ -6431,8 +6455,10 @@ function setup(ctx) {
     };
   }
   async function loadFreshCharacters({ reset = false } = {}) {
-    if (state.freshLoading || state.freshLoadingMore)
+    if (state.freshLoading || state.freshLoadingMore) {
+      state.freshRerunPending = reset;
       return;
+    }
     const serial = ++state.freshSerial;
     state.freshError = "";
     state.freshLoadMoreError = "";
@@ -6484,6 +6510,11 @@ function setup(ctx) {
       state.freshLoading = false;
       state.freshLoadingMore = false;
       render();
+      const freshRerun = state.freshRerunPending;
+      if (freshRerun) {
+        state.freshRerunPending = false;
+        loadFreshCharacters({ reset: freshRerun });
+      }
     }
   }
   async function loadCharacterCommunity(characterId, { quiet = false } = {}) {
@@ -7174,8 +7205,6 @@ function setup(ctx) {
           }
         };
       }
-      const avatarFile = await withImportVerification(requestedName, verificationPopup, () => downloadMirroredAvatar(transfer.character, transfer.avatarPath));
-      closeVerificationPopup(verificationPopup);
       const importResponse = await fetch("/api/v1/characters/import", {
         method: "POST",
         credentials: "include",
@@ -7192,17 +7221,21 @@ function setup(ctx) {
       }
       state.savedCharacters.set(id, lumiverseCharacter.id);
       state.savedLoaded = true;
-      const avatarForm = new FormData;
-      avatarForm.append("avatar", avatarFile);
-      const avatarResponse = await fetch(`/api/v1/characters/${encodeURIComponent(lumiverseCharacter.id)}/avatar`, {
-        method: "POST",
-        credentials: "include",
-        headers: { Accept: "application/json" },
-        body: avatarForm
-      });
-      const avatarCharacter = await readJson(avatarResponse);
-      if (avatarCharacter?.id)
-        lumiverseCharacter = avatarCharacter;
+      try {
+        const avatarFile = await withImportVerification(requestedName, verificationPopup, () => downloadMirroredAvatar(transfer.character, transfer.avatarPath));
+        await uploadCharacterAvatar(lumiverseCharacter.id, avatarFile);
+        const avatarCharacter = await refreshCharacterAvatar(lumiverseCharacter.id);
+        if (avatarCharacter?.id)
+          lumiverseCharacter = avatarCharacter;
+        clearPartialImport(id);
+      } catch (avatarError) {
+        state.partialImports.set(id, {
+          lumiverseCharacterId: lumiverseCharacter.id,
+          name: lumiverseCharacter.name || requestedName,
+          importedAt
+        });
+        throw avatarError;
+      }
       const name = lumiverseCharacter?.name || requestedName;
       upsertImportRecord({
         datacatCharacterId: id,
@@ -7236,16 +7269,92 @@ function setup(ctx) {
       ].includes(error.code);
       const message = cancelled ? "Import cancelled before the Datacat security check was completed." : error.retryAfter ? `${publicErrorMessage(error, "Import failed.")} Retry in ${error.retryAfter}s.` : publicErrorMessage(error, "Import failed.");
       setStatus(message, true);
+      const partial = state.partialImports.get(id);
       setImportFeedback({
         tone: "error",
-        title: cancelled ? `Import of ${requestedName} cancelled` : lumiverseCharacter?.id ? `${lumiverseCharacter.name || requestedName} was added without its image` : `Could not import ${requestedName}`,
-        detail: lumiverseCharacter?.id ? `${message} Open the character to review it; retrying the full import could create a duplicate.` : message,
-        retryLabel: error.code === "VERIFICATION_RETRY_REQUIRED" ? "Continue with security check" : "",
-        datacatCharacterId: lumiverseCharacter?.id ? "" : id,
-        lumiverseCharacterId: lumiverseCharacter?.id || ""
+        title: cancelled ? `Import of ${requestedName} cancelled` : partial ? `${partial.name} was added without its image` : lumiverseCharacter?.id ? `${lumiverseCharacter.name || requestedName} was added without its image` : `Could not import ${requestedName}`,
+        detail: partial ? `${message} The character exists in Lumiverse; retrying uploads only the missing image.` : lumiverseCharacter?.id ? `${message} Open the character to review it; retrying the full import could create a duplicate.` : message,
+        retryLabel: error.code === "VERIFICATION_RETRY_REQUIRED" ? "Continue with security check" : partial ? "Upload image" : "",
+        datacatCharacterId: partial || lumiverseCharacter?.id ? "" : id,
+        lumiverseCharacterId: partial?.lumiverseCharacterId || lumiverseCharacter?.id || ""
       });
     } finally {
       closeVerificationPopup(verificationPopup);
+      state.importId = "";
+      render();
+    }
+  }
+  async function uploadCharacterAvatar(lumiverseCharacterId, avatarFile) {
+    const avatarForm = new FormData;
+    avatarForm.append("avatar", avatarFile);
+    const avatarResponse = await fetch(`/api/v1/characters/${encodeURIComponent(lumiverseCharacterId)}/avatar`, {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      body: avatarForm
+    });
+    const avatarCharacter = await readJson(avatarResponse);
+    if (!avatarCharacter?.id) {
+      throw new Error("Lumiverse could not store the imported image.");
+    }
+    return avatarCharacter;
+  }
+  async function refreshCharacterAvatar(lumiverseCharacterId) {
+    try {
+      const response = await fetch(`/api/v1/characters/${encodeURIComponent(lumiverseCharacterId)}`, { credentials: "include", headers: { Accept: "application/json" } });
+      const payload = await response.json().catch(() => ({}));
+      return payload?.character || null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function clearPartialImport(datacatCharacterId) {
+    state.partialImports.delete(normalizeId(datacatCharacterId));
+  }
+  async function retryPartialImport(id) {
+    const partial = state.partialImports.get(normalizeId(id));
+    if (!partial)
+      return false;
+    const lumiverseCharacterId = normalizeId(partial.lumiverseCharacterId);
+    if (!lumiverseCharacterId) {
+      clearPartialImport(id);
+      return false;
+    }
+    state.importId = id;
+    setStatus(`Uploading image for ${partial.name}…`);
+    setImportFeedback({
+      tone: "progress",
+      title: `Uploading image for ${partial.name}…`,
+      datacatCharacterId: id
+    });
+    render();
+    try {
+      const summary = findCharacterById(id) || state.selected;
+      const transfer = await resolveImportTransferContract(summary || { id }, id);
+      const avatarFile = await downloadMirroredAvatar(transfer.character, transfer.avatarPath);
+      await uploadCharacterAvatar(lumiverseCharacterId, avatarFile);
+      clearPartialImport(id);
+      setStatus("");
+      setImportFeedback({
+        tone: "success",
+        title: `${partial.name} image uploaded`,
+        datacatCharacterId: id,
+        lumiverseCharacterId
+      });
+      return true;
+    } catch (error) {
+      const message = error.retryAfter ? `${publicErrorMessage(error, "Could not upload the image.")} Retry in ${error.retryAfter}s.` : publicErrorMessage(error, "Could not upload the image.");
+      setStatus(message, true);
+      setImportFeedback({
+        tone: "error",
+        title: `${partial.name} image upload failed`,
+        detail: message,
+        retryLabel: "Upload image",
+        datacatCharacterId: "",
+        lumiverseCharacterId
+      });
+      return true;
+    } finally {
       state.importId = "";
       render();
     }
@@ -7261,9 +7370,12 @@ function setup(ctx) {
         const payload = await datacatFetch("/account/status");
         state.linkedAccount = payload.account || null;
         state.accountState = payload.accountState === "logged_in" && state.linkedAccount ? "logged_in" : payload.accountState === "linked_anonymous" ? "linked_anonymous" : "unlinked";
+        state.accountUnavailable = false;
       } catch (error) {
-        state.linkedAccount = null;
-        state.accountState = "unlinked";
+        state.linkedAccount = state.linkedAccount ?? null;
+        state.accountState = "unavailable";
+        state.accountUnavailable = true;
+        state.accountUnavailableMessage = error.retryAfter ? `${publicErrorMessage(error, "Could not check the Datacat account.")} Retry in ${error.retryAfter}s.` : publicErrorMessage(error, "Could not check the Datacat account.");
       } finally {
         accountLoadedAt = Date.now();
         render();
@@ -7288,16 +7400,25 @@ function setup(ctx) {
       return;
     state.accountLinking = true;
     render();
-    await loadAccountState({ force: true });
-    if (state.accountState !== "unlinked" && !requireAccount && !forceAnonymous) {
+    const popup = window.open(verificationPopupWaitingUrl(), "datacat-account-link", "popup=yes,width=560,height=720");
+    if (!popup) {
+      const blocked = new Error("Allow pop-ups for Lumiverse to connect your Datacat account.");
+      blocked.code = "ACCOUNT_POPUP_BLOCKED";
       state.accountLinking = false;
       render();
-      return;
+      throw blocked;
     }
-    let popup = null;
     let cancelled = false;
     setStatus("Connecting…");
     try {
+      await loadAccountState({ force: true });
+      if (state.accountState !== "unlinked" && !requireAccount && !forceAnonymous) {
+        if (!popup.closed)
+          popup.close();
+        state.accountLinking = false;
+        render();
+        return;
+      }
       const payload = await datacatFetch("/account-links", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -7321,9 +7442,21 @@ function setup(ctx) {
         anonymousUrl.searchParams.set("anonymous", "1");
         accountLinkUrl = anonymousUrl.href;
       }
-      popup = window.open(accountLinkUrl, "datacat-account-link", "popup=yes,width=560,height=720");
-      if (!popup) {
-        throw new Error(`Open ${accountLinkUrl} to approve the link.`);
+      try {
+        if (popup.closed) {
+          const closed = new Error("Account linking cancelled.");
+          closed.code = "LINK_WINDOW_CLOSED";
+          throw closed;
+        }
+        popup.location.replace(accountLinkUrl);
+        popup.focus();
+      } catch (navError) {
+        if (navError.code !== "LINK_WINDOW_CLOSED") {
+          const blocked = new Error(`Open ${accountLinkUrl} to approve the link.`);
+          blocked.code = "ACCOUNT_POPUP_BLOCKED";
+          throw blocked;
+        }
+        throw navError;
       }
       setStatus(requireAccount ? "Log in to continue…" : "Connecting…");
       const deadline = Date.now() + Number(payload.expiresIn || 600) * 1000;
@@ -7342,7 +7475,8 @@ function setup(ctx) {
             setVerificationLease(null);
             state.linkedAccount = token.account || null;
             state.accountState = token.accountState === "logged_in" && state.linkedAccount ? "logged_in" : "linked_anonymous";
-            popup.close();
+            if (!popup.closed)
+              popup.close();
             resolve();
           } catch (error) {
             if (error.code !== "LINK_PENDING") {
@@ -7366,11 +7500,13 @@ function setup(ctx) {
       setStatus(`Connected · ${linkedName}`);
     } catch (error) {
       cancelled = error.code === "LINK_WINDOW_CLOSED";
-      const message = error.code === "CLIENT_API_SCHEMA_REQUIRED" ? "Datacat account linking is temporarily unavailable. Character imports still work without linking." : cancelled ? "Cancelled." : publicErrorMessage(error, "Could not link Datacat account.");
+      const message = error.code === "CLIENT_API_SCHEMA_REQUIRED" ? "Datacat account linking is temporarily unavailable. Character imports still work without linking." : error.code === "ACCOUNT_POPUP_BLOCKED" ? publicErrorMessage(error, "Allow pop-ups for Lumiverse to connect your Datacat account.") : cancelled ? "Cancelled." : publicErrorMessage(error, "Could not link Datacat account.");
       setStatus(message, true);
     } finally {
       window.clearTimeout(linkPollTimer);
       linkPollTimer = 0;
+      if (!popup.closed)
+        closeVerificationPopup(popup);
       state.accountLinking = false;
       render();
       if (cancelled)
@@ -7758,7 +7894,11 @@ function setup(ctx) {
     if (retryImport) {
       const characterId = normalizeId(retryImport.getAttribute("data-retry-import"));
       setImportFeedback(null);
-      importCharacter(characterId);
+      if (state.partialImports.has(characterId)) {
+        retryPartialImport(characterId);
+      } else {
+        importCharacter(characterId);
+      }
       return;
     }
     const importButton = target.closest("[data-import]");
@@ -8093,6 +8233,9 @@ function setup(ctx) {
     window.clearTimeout(linkPollTimer);
     window.clearTimeout(verificationPollTimer);
     window.clearTimeout(browserStateSaveTimer);
+    cancelImportVerification();
+    closeVerificationPopup(activeVerificationPopup);
+    activeVerificationPopup = null;
     persistBrowserStateNow();
     catalogObserver.disconnect();
     tagObserver.disconnect();

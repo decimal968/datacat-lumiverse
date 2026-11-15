@@ -412,9 +412,12 @@ function renderInline(text, ctx) {
   out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, (_, alt, href) => {
     const url = safeUrl(href, ctx.origin);
     if (!url) return "";
-    ctx.images.push({ url, alt: alt.trim() });
+    // Alt text is inserted into an attribute; strip tag tokens (which may
+    // resolve to HTML containing quotes) so nothing can break out of it.
+    const safeAlt = alt.replace(/\d+/g, "");
+    ctx.images.push({ url, alt: safeAlt.trim() });
     return hold(
-      `<img class="dcv1-rich-img" src="${esc(url)}" alt="${alt}" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-lightbox-src="${esc(url)}">`,
+      `<img class="dcv1-rich-img" src="${esc(url)}" alt="${safeAlt}" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-lightbox-src="${esc(url)}">`,
     );
   });
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, (_, label, href) => {
