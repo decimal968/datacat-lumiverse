@@ -5,3 +5,6 @@ node_modules/
 *.log
 .env
 .env.*
+# Test artifacts generated during test runs.
+src/backend_test_tmp.mjs
+src/frontend_helpers_test_tmp.mjs

@@ -6,6 +6,7 @@
   "scripts": {
     "build": "bun run build:frontend && bun run build:backend",
     "build:frontend": "bun build src/frontend.js --outfile dist/frontend.js --target browser",
-    "build:backend": "bun build src/backend.js --outfile dist/backend.js --target bun --format esm"
+    "build:backend": "bun build src/backend.js --outfile dist/backend.js --target bun --format esm",
+    "test": "node --test tests/*.test.js"
   }
 }

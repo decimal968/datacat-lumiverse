@@ -60,16 +60,28 @@ if (!api) {
 }
 var cacheByUser = new Map;
 var scanByUser = new Map;
+var installationIdInFlight = new Map;
 function randomInstallationId() {
   return `lumiverse-${uuidv7()}`;
 }
 async function getInstallationId(userId) {
   let value = String(await api.enclave.get(INSTALLATION_KEY, userId) || "");
-  if (!/^[A-Za-z0-9._:-]{16,160}$/.test(value)) {
-    value = randomInstallationId();
-    await api.enclave.put(INSTALLATION_KEY, value, userId);
-  }
-  return value;
+  if (/^[A-Za-z0-9._:-]{16,160}$/.test(value))
+    return value;
+  const pending = installationIdInFlight.get(userId);
+  if (pending)
+    return pending;
+  const promise = (async () => {
+    const created = randomInstallationId();
+    try {
+      await api.enclave.put(INSTALLATION_KEY, created, userId);
+    } finally {
+      installationIdInFlight.delete(userId);
+    }
+    return created;
+  })();
+  installationIdInFlight.set(userId, promise);
+  return promise;
 }
 function parseJson(value) {
   try {
@@ -316,12 +328,13 @@ async function scanLinks(userId) {
     if (rows.length === 0)
       break;
   } while (offset < total);
+  const dirty = (cacheGenerationByUser.get(userId) ?? 0) !== (scanGenerations.get(userId) ?? 0);
   const result = {
     links: [...links.values()].sort((left, right) => importTimestamp(right) - importTimestamp(left)),
     total: links.size,
     scanned: offset,
     loadedAt: Date.now(),
-    dirty: false
+    dirty
   };
   cacheByUser.set(userId, result);
   return result;
@@ -333,11 +346,28 @@ async function getLinks(userId, force = false) {
   }
   if (scanByUser.has(userId))
     return scanByUser.get(userId);
+  scanGenerations.set(userId, cacheGenerationByUser.get(userId) ?? 0);
   const scan = scanLinks(userId).finally(() => {
     scanByUser.delete(userId);
+    scanGenerations.delete(userId);
   });
   scanByUser.set(userId, scan);
   return scan;
+}
+var cacheGenerationByUser = new Map;
+var scanGenerations = new Map;
+var dirtyTargetsByUser = new Map;
+function markLibraryDirty(userId, targetId) {
+  const next = (cacheGenerationByUser.get(userId) ?? 0) + 1;
+  cacheGenerationByUser.set(userId, next);
+  const cached = cacheByUser.get(userId);
+  if (cached)
+    cached.dirty = true;
+  if (targetId) {
+    const targets = dirtyTargetsByUser.get(userId) ?? new Set;
+    targets.add(targetId);
+    dirtyTargetsByUser.set(userId, targets);
+  }
 }
 for (const event of [
   "CHARACTER_CREATED",
@@ -345,9 +375,11 @@ for (const event of [
   "CHARACTER_DELETED",
   "CHARACTER_DUPLICATED"
 ]) {
-  api.on(event, () => {
-    for (const cached of cacheByUser.values())
-      cached.dirty = true;
+  api.on(event, (character) => {
+    const targetId = normalizeId(character?.id);
+    for (const userId of cacheByUser.keys()) {
+      markLibraryDirty(userId, targetId);
+    }
   });
 }
 api.onFrontendMessage(async (payload, userId) => {
